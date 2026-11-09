@@ -2,17 +2,39 @@ const express = require("express");
 const router = express.Router();
 const User = require("../models/User");
 const jwt = require("jsonwebtoken"); 
-const { protect } = require("../middleware/auth"); // ADD THIS LINE
+const { protect } = require("../middleware/auth");
 
-// Register route
-// backend/routes/auth.js - UPDATED VERSION
-router.post("/register", async (req, res, next) => {
+/**
+ * Rejects the request with 400 unless every listed field that is present is a
+ * string. Stops NoSQL operator injection such as {"email": {"$gt": ""}}, which
+ * would otherwise be passed into User.findOne as a query operator.
+ * Presence is still checked by each route. Full validation is plan item B1.
+ */
+const requireStringFields = (...fields) => (req, res, next) => {
+  const body = req.body || {};
+  const invalid = fields.filter((f) => body[f] !== undefined && typeof body[f] !== "string");
+  if (invalid.length > 0) {
+    return res.status(400).json({
+      message: `${invalid.join(", ")} must be a string`,
+      code: "VALIDATION_ERROR",
+      errors: invalid.map((field) => ({ field, message: "must be a string" })),
+    });
+  }
+  return next();
+};
+
+// Register route. Always creates a regular user; admins are created only via
+// scripts/create_admin.js (or the seed script), never from a public endpoint.
+router.post("/register", requireStringFields("name", "email", "password"), async (req, res, next) => {
   console.log("🔐 REGISTER REQUEST RECEIVED");
   console.log("Headers:", req.headers);
   console.log("Full body:", JSON.stringify(req.body, null, 2));
 
   try {
-    const { name, email, password, role = "user" } = req.body; // Default to "user"
+    // `role` from the body is deliberately ignored: self-registration as admin
+    // was possible before.
+    const { name, email, password } = req.body;
+    const role = "user";
 
     console.log("📋 Parsed fields:", { name, email, password, role });
 
@@ -47,7 +69,7 @@ router.post("/register", async (req, res, next) => {
       name,
       email,
       password,
-      role: role || "user" // Ensure role is set
+      role,
     };
     
     console.log("📝 User data to save:", userData);
@@ -129,8 +151,7 @@ router.post("/register", async (req, res, next) => {
 });
 
 // Login route
-// In backend/routes/auth.js - REPLACE the login route with this:
-router.post("/login", async (req, res, next) => {
+router.post("/login", requireStringFields("email", "password"), async (req, res, next) => {
   console.log("🔐 LOGIN REQUEST RECEIVED");
   console.log("Headers:", req.headers);
   console.log("Login body:", req.body);

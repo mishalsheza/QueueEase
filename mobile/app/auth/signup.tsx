@@ -21,7 +21,6 @@ export default function SignupScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [role, setRole] = useState<'user' | 'admin'>('user');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -48,7 +47,8 @@ const handleSignup = async () => {
   console.log('🔄 Starting signup process...');
 
   try {
-    const userData = { name, email, password, role };
+    // Signup always creates a regular user; admins are created server-side.
+    const userData = { name, email, password };
     
     console.log('📤 Signup payload:', userData);
     console.log('🌐 API URL:', api.defaults.baseURL);
@@ -56,19 +56,13 @@ const handleSignup = async () => {
     const res = await api.post('/auth/register', userData);
     
     console.log('✅ Signup response received:', res.data);
-    const { token, user } = res.data;
+    const { token } = res.data;
 
     // Save token and set in headers
     await saveToken(token);
     setAuthToken(token);
     
-    // Navigate based on user role
-    const signupUser = user;
-    if (signupUser?.role === 'admin') {
-      router.replace('/admin/dashboard');
-    } else {
-      router.replace('/(tabs)/dashboard');
-    }
+    router.replace('/(tabs)/dashboard');
   } catch (err: any) {
     console.error('❌ Signup error details:', {
       message: err.message,
@@ -125,53 +119,6 @@ const handleSignup = async () => {
           </View>
 
           <View style={styles.formContainer}>
-            <Text style={styles.sectionTitle}>Account Type</Text>
-            <View style={styles.roleContainer}>
-              <TouchableOpacity
-                style={[
-                  styles.roleButton,
-                  role === 'user' && styles.roleButtonActive,
-                ]}
-                onPress={() => setRole('user')}
-              >
-                <Icon
-                  name="person"
-                  size={24}
-                  color={role === 'user' ? '#4CAF50' : '#666'}
-                />
-                <Text
-                  style={[
-                    styles.roleButtonText,
-                    role === 'user' && styles.roleButtonTextActive,
-                  ]}
-                >
-                  User
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.roleButton,
-                  role === 'admin' && styles.roleButtonActive,
-                ]}
-                onPress={() => setRole('admin')}
-              >
-                <Icon
-                  name="admin-panel-settings"
-                  size={24}
-                  color={role === 'admin' ? '#4CAF50' : '#666'}
-                />
-                <Text
-                  style={[
-                    styles.roleButtonText,
-                    role === 'admin' && styles.roleButtonTextActive,
-                  ]}
-                >
-                  Admin
-                </Text>
-              </TouchableOpacity>
-            </View>
-
             <View style={styles.inputContainer}>
               <Icon name="person" size={20} color="#666" style={styles.inputIcon} />
               <TextInput
@@ -342,41 +289,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 12,
     elevation: 8,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 12,
-  },
-  roleContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 24,
-  },
-  roleButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 16,
-    borderWidth: 2,
-    borderColor: '#e0e0e0',
-    borderRadius: 12,
-    marginHorizontal: 4,
-  },
-  roleButtonActive: {
-    borderColor: '#4CAF50',
-    backgroundColor: 'rgba(76, 175, 80, 0.1)',
-  },
-  roleButtonText: {
-    marginLeft: 8,
-    fontSize: 16,
-    color: '#666',
-    fontWeight: '500',
-  },
-  roleButtonTextActive: {
-    color: '#4CAF50',
   },
   inputContainer: {
     flexDirection: 'row',

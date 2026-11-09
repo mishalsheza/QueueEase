@@ -128,7 +128,6 @@ describe("queue lifecycle", () => {
 });
 
 // Known bugs from the audit, fixed in later plan items.
-test.todo("A2: /register must ignore role=admin from the request body");
 test.todo("A3: an admin cannot call-next/serve/delete another admin's queue");
 test.todo("A4: tokens are unique per queue, including after call-next");
 test.todo("A4: concurrent joins by the same user create one ticket");
