@@ -1,10 +1,12 @@
 {
   "name": "backend",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "nodemon src/server.js"
+    "dev": "nodemon src/server.js",
+    "test": "jest --runInBand",
+    "test:coverage": "jest --runInBand --coverage"
   },
   "keywords": [],
   "author": "",
@@ -20,6 +22,20 @@
     "socket.io": "^4.8.3"
   },
   "devDependencies": {
-    "nodemon": "^3.1.11"
+    "jest": "^30.5.2",
+    "mongodb-memory-server": "^11.3.0",
+    "nodemon": "^3.1.11",
+    "supertest": "^7.3.2"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "setupFiles": [
+      "<rootDir>/tests/setupEnv.js"
+    ],
+    "testTimeout": 30000,
+    "collectCoverageFrom": [
+      "src/**/*.js",
+      "!src/server.js"
+    ]
   }
 }

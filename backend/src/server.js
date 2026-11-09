@@ -57,28 +57,7 @@ async function startServer() {
       });
     });
     
-    // Now load routes AFTER DB is connected
-    console.log("📂 Loading routes...");
-    // Add this in server.js after CORS middleware but before other routes
-    app.get("/cors-test", (req, res) => {
-      res.json({
-        message: "CORS test endpoint",
-        origin: req.headers.origin,
-        corsEnabled: true,
-        timestamp: new Date().toISOString()
-      });
-    });
-    
-    // Auth routes
-    const authRoutes = require("./routes/auth");
-    app.use("/api/auth", authRoutes);
-    console.log("✅ Auth routes loaded");
-    
-    // Queue routes
-    const queueRoutes = require("./routes/queue");
-    app.use("/api/queues", queueRoutes);
-    console.log("✅ Queue routes loaded");
-    
+    // Routes, 404 and error handling are registered in app.js.
     const PORT = process.env.PORT || 5001;
     server.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
@@ -94,5 +73,13 @@ async function startServer() {
     process.exit(1);
   }
 }
+
+// Safety net: route errors are handled by errorHandler, so reaching these
+// means a bug outside a request (e.g. a socket handler). Log, then exit so a
+// process manager restarts us in a clean state.
+process.on("unhandledRejection", (reason) => {
+  console.error("❌ Unhandled promise rejection:", reason);
+  process.exit(1);
+});
 
 startServer();

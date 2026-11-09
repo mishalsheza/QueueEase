@@ -6,7 +6,7 @@ const { protect } = require("../middleware/auth"); // ADD THIS LINE
 
 // Register route
 // backend/routes/auth.js - UPDATED VERSION
-router.post("/register", async (req, res) => {
+router.post("/register", async (req, res, next) => {
   console.log("🔐 REGISTER REQUEST RECEIVED");
   console.log("Headers:", req.headers);
   console.log("Full body:", JSON.stringify(req.body, null, 2));
@@ -124,17 +124,13 @@ router.post("/register", async (req, res) => {
       });
     }
     
-    res.status(500).json({ 
-      message: "Server error during registration",
-      error: error.message,
-      errorType: error.name
-    });
+    return next(error);
   }
 });
 
 // Login route
 // In backend/routes/auth.js - REPLACE the login route with this:
-router.post("/login", async (req, res) => {
+router.post("/login", async (req, res, next) => {
   console.log("🔐 LOGIN REQUEST RECEIVED");
   console.log("Headers:", req.headers);
   console.log("Login body:", req.body);
@@ -227,10 +223,7 @@ router.post("/login", async (req, res) => {
     console.error("🔥 LOGIN ERROR DETAILS:");
     console.error("Error:", error);
     console.error("Stack:", error.stack);
-    res.status(500).json({ 
-      message: "Server error during login",
-      error: error.message 
-    });
+    return next(error);
   }
 });
 router.get("/me", protect, (req, res) => {
