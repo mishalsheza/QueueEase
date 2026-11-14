@@ -8,18 +8,20 @@ import {
   TouchableOpacity,
   StatusBar,
   Dimensions,
-  Alert,
   Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useFocusEffect } from 'expo-router';
 import { Ionicons, MaterialIcons, FontAwesome5 } from '@expo/vector-icons';
-import { api, logout } from '@/lib/api';
+import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
+import { showAlert } from '@/lib/notify';
 import { socket } from '@/lib/socket';
 
 const { width } = Dimensions.get('window');
 
 export default function HomeScreen() {
+  const { signOut } = useAuth();
   const [activeTickets, setActiveTickets] = useState<any[]>([]);
   const [availableQueues, setAvailableQueues] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -46,18 +48,18 @@ export default function HomeScreen() {
     // Check if user is already in this specific queue
     const isAlreadyInQueue = activeTickets.some(t => t.queueId === queueId);
     if (isAlreadyInQueue) {
-      Alert.alert("Already in this queue", `You already have an active ticket for ${qName}.`);
+      showAlert("Already in this queue", `You already have an active ticket for ${qName}.`);
       return;
     }
 
     setJoiningId(queueId);
     try {
       await api.post(`/queues/${queueId}/join`);
-      Alert.alert("Success", `Joined ${qName}!`);
+      showAlert("Success", `Joined ${qName}!`);
       fetchQueueData(); // Refresh the dashboard to show the new ticket
     } catch (err: any) {
       console.error('Error joining queue:', err);
-      Alert.alert("Error", err.response?.data?.message || "Failed to join queue");
+      showAlert("Error", err.response?.data?.message || "Failed to join queue");
     } finally {
       setJoiningId(null);
     }
@@ -103,10 +105,10 @@ export default function HomeScreen() {
       try {
         await api.post(`/queues/${queueId}/leave`);
         fetchQueueData();
-        Alert.alert("Success", `You have left ${qName}.`);
+        showAlert("Success", `You have left ${qName}.`);
       } catch (err) {
         console.error('Error leaving queue:', err);
-        Alert.alert("Error", "Failed to cancel ticket.");
+        showAlert("Error", "Failed to cancel ticket.");
       }
     };
 
@@ -115,7 +117,7 @@ export default function HomeScreen() {
         performCancel();
       }
     } else {
-      Alert.alert(
+      showAlert(
         "Cancel Ticket",
         `Are you sure you want to cancel your ticket for ${qName}?`,
         [
@@ -126,30 +128,12 @@ export default function HomeScreen() {
     }
   };
 
+  // signOut clears the session; the route guards then show the landing screen.
   const handleLogout = () => {
-    const performLogout = async () => {
-      await logout();
-      router.replace('/');
-    };
-
-    if (Platform.OS === 'web') {
-      if (window.confirm("Are you sure you want to logout?")) {
-        performLogout();
-      }
-    } else {
-      Alert.alert(
-        "Logout",
-        "Are you sure you want to logout?",
-        [
-          { text: "Cancel", style: "cancel" },
-          { 
-            text: "Logout", 
-            style: "destructive",
-            onPress: performLogout
-          }
-        ]
-      );
-    }
+    showAlert("Logout", "Are you sure you want to logout?", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Logout", style: "destructive", onPress: () => { signOut(); } },
+    ]);
   };
 
   // Derive active and history tickets
@@ -188,14 +172,7 @@ export default function HomeScreen() {
               <Ionicons name="log-out-outline" size={20} color="white" />
               <Text style={styles.loginButtonText}>Logout</Text>
             </TouchableOpacity>
-            
-            <TouchableOpacity 
-              style={styles.adminLoginButton}
-              onPress={() => router.push('/admin/login')}
-            >
-              <Ionicons name="shield-checkmark" size={20} color="#667eea" />
-              <Text style={styles.adminLoginButtonText}>Admin</Text>
-            </TouchableOpacity>
+
           </View>
         </View>
       </LinearGradient>
@@ -424,21 +401,8 @@ const styles = StyleSheet.create({
     borderRadius: 25,
     gap: 8,
   },
-  adminLoginButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'white',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 25,
-    gap: 8,
-  },
   loginButtonText: {
     color: 'white',
-    fontWeight: '600',
-  },
-  adminLoginButtonText: {
-    color: '#667eea',
     fontWeight: '600',
   },
   sectionHeader: {

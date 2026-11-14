@@ -7,12 +7,12 @@ import {
   ScrollView,
   TouchableOpacity,
   StatusBar,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '@/lib/api';
 import { router } from 'expo-router';
+import { showAlert } from '@/lib/notify';
 
 type QueueItem = {
   _id: string;
@@ -37,7 +37,7 @@ export default function JoinQueueScreen() {
       setQueues(res.data);
     } catch (err) {
       console.error('Error fetching queues:', err);
-      Alert.alert('Error', 'Could not load active queues.');
+      showAlert('Error', 'Could not load active queues.');
     } finally {
       setLoading(false);
     }
@@ -48,7 +48,7 @@ export default function JoinQueueScreen() {
       setLoading(true);
       const res = await api.post(`/queues/${queueId}/join`);
       console.log('Joined queue:', res.data);
-      Alert.alert(
+      showAlert(
         'Success',
         `Successfully joined ${queueName}!`,
         [{ text: 'Great', onPress: () => router.push('/(tabs)/dashboard') }]
@@ -56,7 +56,7 @@ export default function JoinQueueScreen() {
     } catch (err: any) {
       console.error('Error joining queue:', err);
       const message = err.response?.data?.message || 'Failed to join queue.';
-      Alert.alert('Error', message);
+      showAlert('Error', message);
     } finally {
       setLoading(false);
     }

@@ -8,15 +8,17 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  Alert,
 } from 'react-native';
 import { useState } from 'react';
 import { router } from 'expo-router';
-import { api, setAuthToken, saveToken } from '@/lib/api';
+import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
+import { showAlert } from '@/lib/notify';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialIcons as Icon } from '@expo/vector-icons';
 
 export default function SignupScreen() {
+  const { signIn } = useAuth();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -29,17 +31,17 @@ export default function SignupScreen() {
 
 const handleSignup = async () => {
   if (!name || !email || !password || !confirmPassword) {
-    Alert.alert('Error', 'Please fill in all fields');
+    showAlert('Error', 'Please fill in all fields');
     return;
   }
 
   if (password !== confirmPassword) {
-    Alert.alert('Error', 'Passwords do not match');
+    showAlert('Error', 'Passwords do not match');
     return;
   }
 
   if (password.length < 6) {
-    Alert.alert('Error', 'Password must be at least 6 characters');
+    showAlert('Error', 'Password must be at least 6 characters');
     return;
   }
 
@@ -50,26 +52,15 @@ const handleSignup = async () => {
     // Signup always creates a regular user; admins are created server-side.
     const userData = { name, email, password };
     
-    console.log('📤 Signup payload:', userData);
     console.log('🌐 API URL:', api.defaults.baseURL);
 
     const res = await api.post('/auth/register', userData);
     
-    console.log('✅ Signup response received:', res.data);
-    const { token } = res.data;
-
-    // Save token and set in headers
-    await saveToken(token);
-    setAuthToken(token);
-    
-    router.replace('/(tabs)/dashboard');
+    // Same path as login: signIn asks the server for the role and the route
+    // guards show the user screens.
+    await signIn(res.data.token);
   } catch (err: any) {
-    console.error('❌ Signup error details:', {
-      message: err.message,
-      response: err.response?.data,
-      status: err.response?.status,
-      config: err.config
-    });
+    console.error('Signup failed:', err.response?.status, err.response?.data?.message || err.message);
     
     const backendError = err.response?.data;
     let errorMessage = 'Could not create account';
@@ -83,7 +74,7 @@ const handleSignup = async () => {
       }
     }
     
-    Alert.alert('Signup Failed', errorMessage);
+    showAlert('Signup Failed', errorMessage);
   } finally {
     setLoading(false);
   }

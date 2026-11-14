@@ -22,19 +22,20 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.optionsContainer}>
-          <Text style={styles.chooseText}>Choose Login Type</Text>
-          
+          <Text style={styles.chooseText}>Welcome</Text>
+
+          {/* One login for everyone; the server decides user vs admin. */}
           <TouchableOpacity
             style={styles.optionButton}
-            onPress={() => router.push('/auth/login?type=user')}
+            onPress={() => router.push('/auth/login')}
           >
             <View style={[styles.optionIcon, styles.userIcon]}>
-              <Ionicons name="person" size={30} color="#2196F3" />
+              <Ionicons name="log-in-outline" size={30} color="#2196F3" />
             </View>
             <View style={styles.optionText}>
-              <Text style={styles.optionTitle}>User Login</Text>
+              <Text style={styles.optionTitle}>Log in</Text>
               <Text style={styles.optionDescription}>
-                Join queues and track your status
+                Users and admins sign in here
               </Text>
             </View>
             <Ionicons name="chevron-forward" size={24} color="#666" />
@@ -42,32 +43,22 @@ export default function HomeScreen() {
 
           <TouchableOpacity
             style={styles.optionButton}
-            onPress={() => router.push('/auth/login?type=admin')}
+            onPress={() => router.push('/auth/signup')}
           >
-            <View style={[styles.optionIcon, styles.adminIcon]}>
-              <Ionicons name="shield" size={30} color="#2E7D32" />
+            <View style={[styles.optionIcon, styles.signupIcon]}>
+              <Ionicons name="person-add" size={30} color="#2E7D32" />
             </View>
             <View style={styles.optionText}>
-              <Text style={styles.optionTitle}>Admin Login</Text>
+              <Text style={styles.optionTitle}>Sign up</Text>
               <Text style={styles.optionDescription}>
-                Manage queues and monitor services
+                Create an account to join queues
               </Text>
             </View>
             <Ionicons name="chevron-forward" size={24} color="#666" />
           </TouchableOpacity>
         </View>
 
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>
-            Don't have an account?{' '}
-            <Text 
-              style={styles.signupLink}
-              onPress={() => router.push('/auth/signup')}
-            >
-              Sign Up
-            </Text>
-          </Text>
-        </View>
+        <View style={styles.footer} />
       </View>
     </LinearGradient>
   );
@@ -142,7 +133,7 @@ const styles = StyleSheet.create({
   userIcon: {
     backgroundColor: '#e3f2fd',
   },
-  adminIcon: {
+  signupIcon: {
     backgroundColor: '#e8f5e9',
   },
   optionText: {
@@ -160,14 +151,5 @@ const styles = StyleSheet.create({
   },
   footer: {
     paddingBottom: 40,
-    alignItems: 'center',
-  },
-  footerText: {
-    color: 'white',
-    fontSize: 16,
-  },
-  signupLink: {
-    fontWeight: 'bold',
-    textDecorationLine: 'underline',
   },
 });

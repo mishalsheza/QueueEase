@@ -4,15 +4,12 @@ const Queue = require("../models/Queue");
 const Ticket = require("../models/Ticket");
 const { protect } = require("../middleware/auth");
 const asyncHandler = require("../utils/asyncHandler");
+const { requireRole } = require("../middleware/requireRole");
 
 /**
  * Admin creates a queue
  */
-router.post("/", protect, asyncHandler(async (req, res) => {
-  if (req.user.role !== "admin") {
-    return res.status(403).json({ message: "Admin access only" });
-  }
-
+router.post("/", protect, requireRole("admin"), asyncHandler(async (req, res) => {
   const queue = await Queue.create({
     name: req.body.name,
     admin: req.user._id,
@@ -105,7 +102,7 @@ router.get("/my-history", protect, asyncHandler(async (req, res) => {
 /**
  * User joins a queue
  */
-router.post("/:queueId/join", protect, asyncHandler(async (req, res) => {
+router.post("/:queueId/join", protect, requireRole("user"), asyncHandler(async (req, res) => {
   console.log(`👤 User ${req.user._id} attempting to join queue ${req.params.queueId}`);
   
   const queue = await Queue.findById(req.params.queueId);
@@ -154,7 +151,7 @@ router.post("/:queueId/join", protect, asyncHandler(async (req, res) => {
 /**
  * User leaves a queue
  */
-router.post("/:queueId/leave", protect, asyncHandler(async (req, res) => {
+router.post("/:queueId/leave", protect, requireRole("user"), asyncHandler(async (req, res) => {
   const queue = await Queue.findById(req.params.queueId);
   if (!queue) return res.status(404).json({ message: "Queue not found" });
 
@@ -208,11 +205,7 @@ router.get("/:queueId/position", protect, asyncHandler(async (req, res) => {
 /**
  * Admin calls next user
  */
-router.post("/:queueId/call-next", protect, asyncHandler(async (req, res) => {
-  if (req.user.role !== "admin") {
-    return res.status(403).json({ message: "Admin access only" });
-  }
-
+router.post("/:queueId/call-next", protect, requireRole("admin"), asyncHandler(async (req, res) => {
   const queue = await Queue.findById(req.params.queueId);
   if (!queue) return res.status(404).json({ message: "Queue not found" });
 
@@ -268,11 +261,7 @@ router.post("/:queueId/call-next", protect, asyncHandler(async (req, res) => {
 /**
  * Admin marks current user as served (Completed)
  */
-router.post("/:queueId/serve", protect, asyncHandler(async (req, res) => {
-  if (req.user.role !== "admin") {
-    return res.status(403).json({ message: "Admin access only" });
-  }
-
+router.post("/:queueId/serve", protect, requireRole("admin"), asyncHandler(async (req, res) => {
   const queue = await Queue.findById(req.params.queueId);
   if (!queue) return res.status(404).json({ message: "Queue not found" });
 
@@ -304,11 +293,7 @@ router.post("/:queueId/serve", protect, asyncHandler(async (req, res) => {
 }));
 
 // Admin: Get ALL users report (Waiting, Serving, Served, Cancelled)
-router.get("/admin/users-report", protect, asyncHandler(async (req, res) => {
-  if (req.user.role !== "admin") {
-    return res.status(403).json({ message: "Admin access only" });
-  }
-
+router.get("/admin/users-report", protect, requireRole("admin"), asyncHandler(async (req, res) => {
   // Fetch all tickets to show history + active
   const tickets = await Ticket.find()
     .populate("user", "name email")
@@ -349,11 +334,7 @@ router.get("/admin/users-report", protect, asyncHandler(async (req, res) => {
 /**
  * Admin: Get recently completed tickets
  */
-router.get("/admin/completed-report", protect, asyncHandler(async (req, res) => {
-  if (req.user.role !== "admin") {
-    return res.status(403).json({ message: "Admin access only" });
-  }
-
+router.get("/admin/completed-report", protect, requireRole("admin"), asyncHandler(async (req, res) => {
   const tickets = await Ticket.find({ status: "served" })
     .populate("user", "name email")
     .sort({ completedAt: -1 })
@@ -365,11 +346,7 @@ router.get("/admin/completed-report", protect, asyncHandler(async (req, res) => 
 /**
  * Admin deletes a queue
  */
-router.delete("/:queueId", protect, asyncHandler(async (req, res) => {
-  if (req.user.role !== "admin") {
-    return res.status(403).json({ message: "Admin access only" });
-  }
-
+router.delete("/:queueId", protect, requireRole("admin"), asyncHandler(async (req, res) => {
   const queue = await Queue.findByIdAndDelete(req.params.queueId);
   if (!queue) {
     return res.status(404).json({ message: "Queue not found" });

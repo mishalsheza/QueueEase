@@ -9,14 +9,15 @@ import {
   StatusBar,
   Modal,
   TextInput,
-  Alert,
   Dimensions,
   Platform,
 } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { api, logout } from '@/lib/api';
+import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
+import { showAlert } from '@/lib/notify';
 import { socket } from '@/lib/socket';
 
 const { width } = Dimensions.get('window');
@@ -54,6 +55,7 @@ type UserInQueue = {
 };
 
 export default function AdminDashboard() {
+  const { user, signOut } = useAuth();
   const [queues, setQueues] = useState<QueueType[]>([]);
   const [users, setUsers] = useState<UserInQueue[]>([]);
   const [completedTickets, setCompletedTickets] = useState<any[]>([]);
@@ -119,7 +121,7 @@ export default function AdminDashboard() {
 
   const handleCreateQueue = async () => {
     if (!newQueue.name.trim()) {
-      Alert.alert('Error', 'Please enter queue name');
+      showAlert('Error', 'Please enter queue name');
       return;
     }
 
@@ -133,10 +135,10 @@ export default function AdminDashboard() {
       setQueues([...queues, res.data]);
       setNewQueue({ name: '', type: 'Dental Care', section: 'A' });
       setShowCreateModal(false);
-      Alert.alert('Success', `Queue "${newQueue.name}" created successfully!`);
+      showAlert('Success', `Queue "${newQueue.name}" created successfully!`);
     } catch (err) {
       console.error('Error creating queue:', err);
-      Alert.alert('Error', 'Failed to create queue');
+      showAlert('Error', 'Failed to create queue');
     }
   };
 
@@ -160,7 +162,7 @@ export default function AdminDashboard() {
       fetchQueues();
     } catch (err: any) {
       console.error('Error calling next:', err);
-      Alert.alert('Error', err.response?.data?.message || 'Failed to call next person.');
+      showAlert('Error', err.response?.data?.message || 'Failed to call next person.');
     }
   };
 
@@ -168,10 +170,10 @@ export default function AdminDashboard() {
     try {
       await api.post(`/queues/${queueId}/serve`);
       fetchQueues();
-      Alert.alert('Success', 'Customer marked as completed.');
+      showAlert('Success', 'Customer marked as completed.');
     } catch (err: any) {
       console.error('Error serving:', err);
-      Alert.alert('Error', err.response?.data?.message || 'Failed to serve customer.');
+      showAlert('Error', err.response?.data?.message || 'Failed to serve customer.');
     }
   };
 
@@ -193,13 +195,13 @@ export default function AdminDashboard() {
     console.log(`Confirmed delete for: ${queueId}`);
     try {
       await api.delete(`/queues/${queueId}`);
-      Alert.alert('Success', 'Queue deleted successfully');
+      showAlert('Success', 'Queue deleted successfully');
       fetchQueues();
     } catch (err: any) {
       console.error('Error deleting queue:', err);
       const errMsg = err.response?.data?.message || err.message || 'Failed to delete queue';
       const status = err.response?.status;
-      Alert.alert('Delete Failed', `Status: ${status}\nMessage: ${errMsg}`);
+      showAlert('Delete Failed', `Status: ${status}\nMessage: ${errMsg}`);
     }
   };
 
@@ -212,7 +214,7 @@ export default function AdminDashboard() {
         performDelete(queueId);
       }
     } else {
-      Alert.alert(
+      showAlert(
         'Delete Queue',
         `Are you sure you want to delete "${queueName}"?`,
         [
@@ -231,26 +233,12 @@ export default function AdminDashboard() {
     router.push('/admin/users');
   };
 
+  // signOut clears the session; the route guards then show the landing screen.
   const handleLogout = () => {
-    const performLogout = async () => {
-      await logout();
-      router.replace('/auth/login?type=admin');
-    };
-
-    if (Platform.OS === 'web') {
-      if (window.confirm('Are you sure you want to logout?')) {
-        performLogout();
-      }
-    } else {
-      Alert.alert(
-        'Logout',
-        'Are you sure you want to logout?',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Logout', style: 'destructive', onPress: performLogout }
-        ]
-      );
-    }
+    showAlert('Logout', 'Are you sure you want to logout?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Logout', style: 'destructive', onPress: () => { signOut(); } },
+    ]);
   };
 
   return (
@@ -268,7 +256,8 @@ export default function AdminDashboard() {
               <Text style={styles.brandName}>QueueEase</Text>
               <View style={[styles.connectionDot, isConnected ? styles.connected : styles.disconnected]} />
             </View>
-            <Text style={styles.clinicName}>Managing: Main Street Clinic</Text>
+            <Text style={styles.clinicName}>{user?.name || 'Admin'}</Text>
+            {!!user?.email && <Text style={styles.adminEmail}>{user.email}</Text>}
           </View>
           <View style={styles.headerRight}>
             <TouchableOpacity 
@@ -277,8 +266,9 @@ export default function AdminDashboard() {
             >
               <Ionicons name="add-circle" size={24} color="white" />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-              <Ionicons name="log-out-outline" size={24} color="white" />
+            <TouchableOpacity style={styles.logoutButton} onPress={handleLogout} accessibilityLabel="Logout">
+              <Ionicons name="log-out-outline" size={20} color="white" />
+              <Text style={styles.logoutText}>Logout</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -590,8 +580,23 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: 'rgba(255, 255, 255, 0.9)',
   },
+  adminEmail: {
+    fontSize: 13,
+    color: 'rgba(255, 255, 255, 0.75)',
+    marginTop: 2,
+  },
   logoutButton: {
-    padding: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  logoutText: {
+    color: 'white',
+    fontWeight: '600',
   },
   overviewSection: {
     padding: 20,

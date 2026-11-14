@@ -1,4 +1,4 @@
-// app/login.tsx
+// app/auth/login.tsx - one login screen for users and admins
 import {
   View,
   Text,
@@ -8,82 +8,50 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  Alert,
 } from 'react-native';
 import { useState } from 'react';
-import { router, useLocalSearchParams } from 'expo-router';
-import { api, setAuthToken, saveToken, saveUserRole } from '@/lib/api';
+import { router } from 'expo-router';
+import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
+import { showAlert } from '@/lib/notify';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialIcons as Icon } from '@expo/vector-icons';
 
 export default function LoginScreen() {
-  const params = useLocalSearchParams();
-  const userType = params.type || 'user';
-  
+  const { signIn } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-const handleLogin = async () => {
-  console.log('🔐 Login attempt with:', { email });
-  
-  if (!email || !password) {
-    Alert.alert('Error', 'Please enter email and password');
-    return;
-  }
-
-  setLoading(true);
-  
-  try {
-    console.log('📤 Sending login request...');
-    console.log('API URL:', api.defaults.baseURL);
-    
-    const res = await api.post('/auth/login', { email, password });
-    
-    console.log('✅ Login response:', res.data);
-    const { token, user } = res.data;
-
-    // Check if user type matches
-    if (userType === 'admin' && user.role !== 'admin') {
-      Alert.alert('Error', 'This account is not an admin account');
+  const handleLogin = async () => {
+    if (!email || !password) {
+      showAlert('Error', 'Please enter email and password');
       return;
     }
 
-    console.log('🔑 Token received, saving...');
-    await saveToken(token);
-    await saveUserRole(user.role);
-    setAuthToken(token);
-    
-    console.log('🔄 Navigating to tabs...');
-// Navigate based on user role
-if (user.role === 'admin') {
-  router.replace('/admin/dashboard');
-} else {
-  router.replace('/(tabs)/dashboard');
-}    
-  } catch (err: any) {
-    console.error('❌ Login error details:', {
-      message: err.message,
-      response: err.response?.data,
-      status: err.response?.status,
-      config: err.config
-    });
-    
-    // Show specific error message from backend
-    const errorMessage = err.response?.data?.message || 'Login failed. Please try again.';
-    Alert.alert('Login Failed', errorMessage);
-  } finally {
-    setLoading(false);
-  }
-};
+    setLoading(true);
+    try {
+      const res = await api.post('/auth/login', { email, password });
+      // signIn asks the server (GET /api/auth/me) for the role. The route
+      // guards in app/_layout.tsx then show the admin or user screens.
+      await signIn(res.data.token);
+    } catch (err: any) {
+      console.error('Login failed:', err.response?.status, err.response?.data?.message || err.message);
+      const errorMessage = err.response?.data?.message || 'Login failed. Please try again.';
+      showAlert('Login Failed', errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const goBack = () => {
     router.back();
   };
 
   return (
     <LinearGradient
-      colors={userType === 'admin' ? ['#4CAF50', '#2E7D32'] : ['#2196F3', '#1976D2']}
+      colors={['#2196F3', '#1976D2']}
       style={styles.container}
     >
       <KeyboardAvoidingView
@@ -96,7 +64,7 @@ if (user.role === 'admin') {
               <Icon name="arrow-back" size={24} color="white" />
             </TouchableOpacity>
             <Text style={styles.title}>
-              {userType === 'admin' ? 'Admin Login' : 'User Login'}
+              Log in
             </Text>
             <View style={{ width: 40 }} />
           </View>
@@ -104,7 +72,7 @@ if (user.role === 'admin') {
           <View style={styles.illustrationContainer}>
             <View style={styles.illustration}>
               <Icon
-                name={userType === 'admin' ? 'admin-panel-settings' : 'person'}
+                name="person"
                 size={80}
                 color="white"
               />
@@ -175,7 +143,7 @@ if (user.role === 'admin') {
 
             <TouchableOpacity style={styles.signupButton} onPress={() => router.push('/auth/signup')}>
               <Text style={styles.signupButtonText}>
-                Don't have an account?{' '}
+                Don&apos;t have an account?{' '}
                 <Text style={styles.signupHighlight}>Sign Up</Text>
               </Text>
             </TouchableOpacity>
