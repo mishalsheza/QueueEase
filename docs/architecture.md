@@ -4,11 +4,13 @@ QueueEase is a queue management app: an Expo (React Native) client talks to a
 Node/Express API over REST, receives live updates over Socket.io, and stores
 data in MongoDB.
 
-This document has two parts:
+This document has three parts:
 
 1. **Before the role-based workflow change**: how the app behaved when it was
    audited, including the problems found. Kept for reference.
 2. **Role-based workflow (current)**: how login, roles and navigation work now.
+3. **Queue model and concurrency (current)**: the Ticket-first queue model,
+   queue status (open / paused / closed), and before/after concurrency numbers.
 
 ---
 
@@ -191,7 +193,9 @@ sequenceDiagram
 | 13 | Route collisions | n/a | `(admin)/dashboard` and `(admin)/profile` resolve to `/dashboard` and `/profile`, colliding with `(tabs)`. |
 
 **Status:** #1–#6, #12 and #13 are fixed by the role-based workflow (section 2).
-#7 (socket rooms) is planned as part of socket authentication; #8–#11 are
+#9 and #10 are fixed by the queue model change (section 3): pause/resume is
+stored on the server and the next token comes from the server.
+#7 (socket rooms) is planned as part of socket authentication; #8 and #11 are
 still open.
 
 ---
@@ -219,8 +223,9 @@ flowchart LR
     Protect["protect<br/>JWT → req.user"]
     Role["requireRole<br/>403 for the wrong role"]
     Owner["requireQueueOwner<br/>403 on another admin's queue"]
+    Service["services/queueService<br/>atomic queue operations"]
     Models["Mongoose models<br/>User · Queue · Ticket"]
-    Express --> Protect --> Role --> Owner --> Models
+    Express --> Protect --> Role --> Owner --> Service --> Models
   end
 
   DB[("MongoDB")]
@@ -234,9 +239,9 @@ flowchart LR
 - **Role comes from the server.** After login and on every app start, the app calls
   `GET /api/auth/me`. The role saved on the device is only a fallback when the
   server can't be reached.
-- **Admins only manage their own queues.** Call next, serve and delete check
-  that the queue belongs to the signed-in admin (403 otherwise); the queue list
-  and reports only include that admin's queues.
+- **Admins only manage their own queues.** Call next, serve, pause/resume and
+  close check that the queue belongs to the signed-in admin (403 otherwise);
+  the queue list and reports only include that admin's queues.
 - **Guards on both sides.** The client uses `Stack.Protected` to show each role only
   its own screens. The backend stays the source of truth and returns 403 for
   wrong-role requests, including admins trying to join or leave queues.
@@ -275,7 +280,7 @@ flowchart TD
   end
 
   subgraph AdminArea["Stack.Protected guard: role = admin"]
-    AD["admin/dashboard<br/>create · call next · serve · delete"]
+    AD["admin/dashboard<br/>create · call next · serve · pause/resume · close"]
     AU["admin/users<br/>reports"]
     AD --> AU
   end
@@ -333,3 +338,146 @@ sequenceDiagram
 | `app/test-api.tsx` | Calls a non-existent route |
 | `app/modal.tsx` | Unused Expo template screen |
 | `pages/Dashboard.js`, `api/api.js`, `socket.js` | Old web-React code; not part of the Expo app |
+
+---
+
+## 3. Queue model and concurrency (current)
+
+### 3.1 What changed
+
+Before, a queue stored its waiting list twice: as a `users` array inside the
+Queue document **and** as Ticket documents. Every action loaded the queue,
+changed the array in memory and saved it back, and the token was computed as
+`first letter + waiting-list length`. Under concurrent requests this produced
+duplicate tokens, users joined twice, and a list that disagreed with the
+tickets.
+
+Now **tickets are the single source of truth**. The Queue document only holds
+settings, a lifecycle `status` and a ticket counter. Every change is one atomic
+MongoDB update, or an insert guarded by a unique index.
+
+```mermaid
+flowchart LR
+  subgraph Before["Before"]
+    QB["Queue<br/>users: [ {user, joinedAt} ]<br/>nowServing: {user, token}"]
+    TB["Ticket<br/>token = letter + users.length<br/>status"]
+    QB -. "two copies of the same list,<br/>updated separately" .- TB
+  end
+  subgraph After["After (Ticket-first)"]
+    QA["Queue<br/>status: open | paused | closed<br/>lastSeq (atomic counter)"]
+    TA["Ticket<br/>seq, token = letter + seq<br/>status, active"]
+    QA -- "waiting list and 'now serving'<br/>are queries on tickets" --> TA
+  end
+```
+
+### 3.2 How each guarantee is enforced
+
+| Guarantee | Mechanism |
+|---|---|
+| Every token in a queue is unique | `lastSeq` is reserved with one atomic `$inc` on join. Unique index on `(queue, seq)`. |
+| A user can't hold two places in one queue (double taps) | Unique partial index on `(queue, user)` where `active: true`. The losing request returns the existing ticket (join stays idempotent). |
+| Only one person at the counter | Unique partial index on `queue` where `status: "serving"`. A concurrent second call-next gets 409 and nobody is skipped. |
+| Paused/closed queues reject joins | The `$inc` that reserves a number only matches `status: "open"`. |
+| A join racing a close leaves nothing behind | After inserting, join re-reads the status and cancels its own ticket if the queue was closed meanwhile. |
+| List and tickets can't disagree | There is no list any more. `users`, `nowServing`, `waitingCount` and `nextToken` in API responses are computed from tickets. |
+
+### 3.3 Queue status
+
+```mermaid
+stateDiagram-v2
+  [*] --> open
+  open --> paused: Pause
+  paused --> open: Resume
+  open --> closed: Close (was Delete)
+  paused --> closed: Close (was Delete)
+  closed --> [*]
+```
+
+| | open | paused | closed |
+|---|---|---|---|
+| New joins | yes | 409 `QUEUE_PAUSED` | 409 `QUEUE_CLOSED` |
+| Waiting list | kept | kept | waiting tickets cancelled |
+| Leave | yes | yes | n/a |
+| Call next / serve | yes | yes (work through who is waiting) | call next 409 |
+| Listed for users / admin | yes | yes, with its status | no |
+| Tickets in admin reports | yes | yes | yes (history is kept) |
+
+Closing also completes the ticket of the person at the counter (`served`),
+the same rule call-next uses. A closed queue can't be reopened.
+
+### 3.4 Join (sequence)
+
+```mermaid
+sequenceDiagram
+  participant App
+  participant API as POST /queues/:id/join
+  participant Q as Queue
+  participant T as Ticket
+  App->>API: join
+  API->>T: active ticket for this user?
+  alt already has one
+    API-->>App: 200 (same ticket, idempotent)
+  else
+    API->>Q: findOneAndUpdate status=open, $inc lastSeq
+    alt queue paused or closed
+      API-->>App: 409 QUEUE_PAUSED or QUEUE_CLOSED
+    else number reserved
+      API->>T: insert ticket with seq and token
+      alt unique index rejects (concurrent double tap)
+        API-->>App: 200 (the ticket that won)
+      else inserted
+        API->>Q: re-read status
+        API-->>App: 200 (or 409 if closed meanwhile, ticket cancelled)
+      end
+    end
+  end
+```
+
+### 3.5 API changes
+
+| Endpoint | Change |
+|---|---|
+| `PATCH /api/queues/:id/status` | **New.** Body `{ "status": "paused" }` or `{ "status": "open" }`. Owner only. |
+| `POST /api/queues/:id/close` | **New.** Closes the queue. Owner only. Returns `{ message, cancelled, servedCurrent }`. |
+| `DELETE /api/queues/:id` | Now an alias for close. The queue document and its tickets are kept. |
+| `POST /api/queues/:id/join` | 409 when the queue is paused or closed. |
+| `GET /api/queues` and queue responses | Add `status`, `waitingCount`, `nextToken`. `users` and `nowServing` keep their shape but are computed from tickets. Closed queues are left out. |
+| `GET /api/queues/my-status` | Adds `queueStatus`. Positions come from ticket order. |
+| Admin reports | Include tickets from closed queues. |
+
+Existing databases are moved to the new model with
+`node scripts/migrate_queue_model.js` (dry run) and `--apply`. The migration
+never deletes data, numbers existing tickets in join order, and cleans up
+leftovers of the old double-join bug.
+
+### 3.6 Concurrency numbers (before / after)
+
+Measured with [`backend/bench/concurrency.js`](../backend/bench/concurrency.js)
+(`npm run bench:concurrency`). It runs the real Express app against a throwaway
+in-memory MongoDB and fires real concurrent HTTP requests. It only uses
+endpoints that exist in both versions, so the same script measured both.
+
+Each run is 5 rounds of four scenarios (1,625 requests):
+
+- **burst:** 50 users join one queue at the same moment
+- **churn:** 10 waiting, then 15 steps of call-next + join + leave fired together
+- **taps:** 20 users each tap Join 5 times at once
+- **storm:** 30 users each send join, leave, join, leave at once
+
+| Metric (per 1,625 requests) | Original code (`fcfbb39`) | Before A4 (after error handling, A1) | After A4 |
+|---|---|---|---|
+| Duplicate tokens | 391 | 883–893 | **0** |
+| Double joins (extra active tickets / list entries) | 222 | 851–862 | **0** |
+| Waiting list out of sync with tickets | 114 | 125–135 | **0** |
+| Unhandled rejections (each would crash the server) | 141 | 0 | **0** |
+| Requests that never got a response | 141 | 0 | **0** |
+| Requests rejected with 409 (user action lost, retry needed) | 0 | 149–153 | **0** |
+| 5xx responses | 0 | 0 | **0** |
+
+"Before A4" and "After A4" are ranges over 3 runs each; "After A4" was 0 in
+every run. The original code was run once. It shows fewer duplicates only
+because 141 of its requests crashed instead of completing: on a real server
+the first unhandled rejection takes the whole process down.
+
+The same guarantees are checked on every test run by
+[`backend/tests/concurrency.test.js`](../backend/tests/concurrency.test.js).

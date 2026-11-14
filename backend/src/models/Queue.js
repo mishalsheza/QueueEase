@@ -1,45 +1,36 @@
 const mongoose = require("mongoose");
 
+/**
+ * A queue (a service counter). Who is waiting and who is being served is not
+ * stored here: Tickets are the single source of truth (see Ticket.js). This
+ * document only holds settings, the lifecycle status and the token counter.
+ */
+const QUEUE_STATUSES = ["open", "paused", "closed"];
+
 const queueSchema = new mongoose.Schema(
   {
-    name: {
-      type: String,
-      required: true,
-    },
-    admin: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
-    },
-    type: {
-      type: String,
-      default: 'General Checkup'
-    },
-    section: {
-      type: String,
-      default: 'A'
-    },
-    users: [
-      {
-        user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-        joinedAt: { type: Date, default: Date.now },
-      },
-    ],
-    servedToday: {
-      type: Number,
-      default: 0
-    },
-    avgProcessTime: {
-      type: Number,
-      default: 15
-    },
-    nowServing: {
-      user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-      token: String,
-      startedAt: Date
-    }
+    name: { type: String, required: true },
+    admin: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    type: { type: String, default: "General Checkup" },
+    section: { type: String, default: "A" },
+
+    // open:   accepts joins
+    // paused: rejects new joins, keeps the waiting list; the admin can still
+    //         call and serve the people already waiting
+    // closed: final. Rejects joins, waiting tickets were cancelled, history
+    //         stays in reports. Replaces the old hard delete.
+    status: { type: String, enum: QUEUE_STATUSES, default: "open" },
+    closedAt: { type: Date },
+
+    // Last ticket number handed out. Incremented atomically on join, so every
+    // ticket in a queue gets a unique token (A-1, A-2, ...).
+    lastSeq: { type: Number, default: 0 },
+
+    servedToday: { type: Number, default: 0 },
+    avgProcessTime: { type: Number, default: 15 },
   },
   { timestamps: true }
 );
 
 module.exports = mongoose.model("Queue", queueSchema);
+module.exports.QUEUE_STATUSES = QUEUE_STATUSES;

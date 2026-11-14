@@ -6,7 +6,9 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "test": "jest --runInBand",
-    "test:coverage": "jest --runInBand --coverage"
+    "test:coverage": "jest --runInBand --coverage",
+    "bench:concurrency": "node bench/concurrency.js",
+    "migrate:queues": "node scripts/migrate_queue_model.js"
   },
   "keywords": [],
   "author": "",

@@ -15,6 +15,7 @@ afterAll(db.close);
 const as = (actor) => ({
   get: (url) => request(app).get(url).set("Authorization", actor.auth),
   post: (url, body) => request(app).post(url).set("Authorization", actor.auth).send(body),
+  patch: (url, body) => request(app).patch(url).set("Authorization", actor.auth).send(body),
   del: (url) => request(app).delete(url).set("Authorization", actor.auth),
 });
 
@@ -41,10 +42,8 @@ describe("another admin cannot manage my queue", () => {
     expect(res.status).toBe(403);
     expect(res.body).toEqual(FORBIDDEN);
 
-    const q = await Queue.findById(qA._id);
-    expect(q.users).toHaveLength(2);
-    expect(q.nowServing?.user).toBeUndefined();
     expect(await Ticket.countDocuments({ queue: qA._id, status: "waiting" })).toBe(2);
+    expect(await Ticket.countDocuments({ queue: qA._id, status: "serving" })).toBe(0);
   });
 
   test("serve on another admin's queue -> 403, current ticket stays serving", async () => {
@@ -55,7 +54,6 @@ describe("another admin cannot manage my queue", () => {
     expect(res.body).toEqual(FORBIDDEN);
 
     const q = await Queue.findById(qA._id);
-    expect(q.nowServing.user.toString()).toBe(u1.user._id.toString());
     expect(q.servedToday).toBe(0);
     expect((await Ticket.findOne({ user: u1.user._id })).status).toBe("serving");
   });
@@ -67,11 +65,21 @@ describe("another admin cannot manage my queue", () => {
     expect(await Queue.exists({ _id: qA._id })).toBeTruthy();
   });
 
-  test("the owner can still call-next, serve and delete", async () => {
+  test("the owner can still call-next, serve and delete (which now closes)", async () => {
     expect((await as(adminA).post(`/api/queues/${qA._id}/call-next`)).status).toBe(200);
     expect((await as(adminA).post(`/api/queues/${qA._id}/serve`)).status).toBe(200);
     expect((await as(adminA).del(`/api/queues/${qA._id}`)).status).toBe(200);
-    expect(await Queue.exists({ _id: qA._id })).toBeNull();
+    expect((await Queue.findById(qA._id)).status).toBe("closed");
+  });
+
+  test("pause/resume and close on another admin's queue -> 403, status unchanged", async () => {
+    const pause = await as(adminB).patch(`/api/queues/${qA._id}/status`, { status: "paused" });
+    expect(pause.status).toBe(403);
+    expect(pause.body).toEqual(FORBIDDEN);
+    const close = await as(adminB).post(`/api/queues/${qA._id}/close`);
+    expect(close.status).toBe(403);
+    expect((await Queue.findById(qA._id)).status).toBe("open");
+    expect(await Ticket.countDocuments({ queue: qA._id, status: "waiting" })).toBe(2);
   });
 
   test("unknown queue id -> 404, malformed id -> 400 (not 403)", async () => {

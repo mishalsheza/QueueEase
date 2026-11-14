@@ -10,7 +10,6 @@ import {
   Modal,
   TextInput,
   Dimensions,
-  Platform,
 } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -28,9 +27,10 @@ type QueueType = {
   name: string;
   type: 'Dental Care' | 'Pharmacy' | 'General Checkup' | 'Voting' | 'Finance Help Desk';
   section: 'A' | 'B' | 'C' | 'D';
-  status: 'running' | 'paused' | 'closed';
+  status: 'open' | 'paused' | 'closed'; // from the server (A4)
+  nextToken: string | null;
+  waitingCount: number;
   currentToken: string;
-  nextToken: string;
   waiting: number;
   avgProcessTime: number;
   servedToday: number;
@@ -177,56 +177,42 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleToggleStatus = (queueId: string) => {
-    setQueues(queues.map(queue => {
-      if (queue._id === queueId) {
-        return { 
-          ...queue, 
-          status: queue.status === 'running' ? 'paused' : 'running' 
-        };
-      }
-      return queue;
-    }));
-  };
-
-
-
-  const performDelete = async (queueId: string) => {
-    console.log(`Confirmed delete for: ${queueId}`);
+  // Pause/Resume is stored on the server: a paused queue rejects new joins
+  // but keeps its waiting list. (It used to only change local state.)
+  const handleToggleStatus = async (queue: QueueType) => {
+    const status = queue.status === 'open' ? 'paused' : 'open';
     try {
-      await api.delete(`/queues/${queueId}`);
-      showAlert('Success', 'Queue deleted successfully');
+      await api.patch(`/queues/${queue._id}/status`, { status });
       fetchQueues();
     } catch (err: any) {
-      console.error('Error deleting queue:', err);
-      const errMsg = err.response?.data?.message || err.message || 'Failed to delete queue';
-      const status = err.response?.status;
-      showAlert('Delete Failed', `Status: ${status}\nMessage: ${errMsg}`);
+      console.error('Error changing queue status:', err);
+      showAlert('Error', err.response?.data?.message || 'Failed to update the queue.');
+    }
+  };
+
+  // "Delete" now closes the queue: new joins are rejected, people still
+  // waiting are cancelled, and its history stays in the reports.
+  const performClose = async (queueId: string) => {
+    try {
+      const res = await api.post(`/queues/${queueId}/close`);
+      const n = res.data?.cancelled ?? 0;
+      showAlert('Queue closed', n > 0 ? `${n} waiting ${n === 1 ? 'person was' : 'people were'} removed from the queue.` : undefined);
+      fetchQueues();
+    } catch (err: any) {
+      console.error('Error closing queue:', err);
+      showAlert('Close Failed', err.response?.data?.message || err.message || 'Failed to close queue');
     }
   };
 
   const handleDeleteQueue = (queueId: string, queueName: string) => {
-    console.log(`Requesting to delete queue: ${queueId} (${queueName})`);
-    
-    if (Platform.OS === 'web') {
-      const confirmed = window.confirm(`Are you sure you want to delete "${queueName}"?`);
-      if (confirmed) {
-        performDelete(queueId);
-      }
-    } else {
-      showAlert(
-        'Delete Queue',
-        `Are you sure you want to delete "${queueName}"?`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Delete',
-            style: 'destructive',
-            onPress: () => performDelete(queueId)
-          }
-        ]
-      );
-    }
+    showAlert(
+      'Close Queue',
+      `Close "${queueName}"? People still waiting will be removed. Its history stays in your reports.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Close queue', style: 'destructive', onPress: () => performClose(queueId) },
+      ]
+    );
   };
 
   const handleViewUsers = () => {
@@ -317,10 +303,10 @@ export default function AdminDashboard() {
                 <View style={styles.statusRow}>
                   <View style={[
                     styles.statusIndicator,
-                    queue.status === 'running' ? styles.running : styles.paused
+                    queue.status === 'open' ? styles.running : styles.paused
                   ]} />
                   <Text style={styles.statusText}>
-                    {queue.status === 'running' ? 'Running' : 'Paused'}
+                    {queue.status === 'open' ? 'Running' : 'Paused'}
                   </Text>
                 </View>
               </View>
@@ -329,6 +315,8 @@ export default function AdminDashboard() {
                 <TouchableOpacity 
                   onPress={() => handleDeleteQueue(queue._id, queue.name)}
                   style={styles.deleteButton}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Close queue ${queue.name}`}
                 >
                   <Ionicons name="trash-outline" size={20} color="#FF5252" />
                 </TouchableOpacity>
@@ -342,7 +330,7 @@ export default function AdminDashboard() {
               </View>
               <View style={styles.tokenInfo}>
                 <Text style={styles.tokenLabel}>NEXT</Text>
-                <Text style={styles.tokenValue}>{(queue.users && queue.users.length > 0) ? `${queue.name.charAt(0).toUpperCase()}-${queue.servedToday + 1 + (queue.nowServing ? 1 : 0)}` : '--'}</Text>
+                <Text style={styles.tokenValue}>{queue.nextToken || '--'}</Text>
               </View>
             </View>
 
@@ -350,17 +338,17 @@ export default function AdminDashboard() {
               <TouchableOpacity
                 style={[
                   styles.actionButton,
-                  queue.status === 'running' ? styles.pauseAction : styles.resumeAction
+                  queue.status === 'open' ? styles.pauseAction : styles.resumeAction
                 ]}
-                onPress={() => handleToggleStatus(queue._id)}
+                onPress={() => handleToggleStatus(queue)}
               >
                 <Ionicons
-                  name={queue.status === 'running' ? 'pause' : 'play'}
+                  name={queue.status === 'open' ? 'pause' : 'play'}
                   size={16}
                   color="white"
                 />
                 <Text style={styles.actionButtonText}>
-                  {queue.status === 'running' ? 'PAUSE' : 'RESUME'}
+                  {queue.status === 'open' ? 'PAUSE' : 'RESUME'}
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity

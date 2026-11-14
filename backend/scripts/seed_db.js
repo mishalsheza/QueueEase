@@ -2,8 +2,12 @@
  * Resets the dev database to a small demo data set.
  *
  * DELETES all users, queues and tickets in the "queueease" database first, so
- * it refuses to run without --yes:
- *   node scripts/seed_db.js --yes
+ * it only runs when BOTH are true:
+ *   1. --yes is passed:  node scripts/seed_db.js --yes
+ *   2. MONGO_URI points at this machine (every host is localhost or
+ *      127.0.0.1), or NODE_ENV=test. A cloud database such as Atlas
+ *      (mongodb+srv://...) is refused.
+ * Both are checked before connecting.
  *
  * Demo logins (password "password123"):
  *   admin@example.com (admin), john@example.com (user)
@@ -28,13 +32,48 @@ async function seed() {
   return { admin, user, queue };
 }
 
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1"]);
+
+/** Hostnames in a MongoDB connection string, without credentials or ports. */
+function uriHosts(uri) {
+  const m = /^mongodb(\+srv)?:\/\/(?:[^@/]*@)?([^/?]*)/.exec(uri || "");
+  if (!m) return { srv: false, hosts: [] };
+  const hosts = m[2]
+    .split(",")
+    .map((h) => h.replace(/:\d+$/, "").toLowerCase())
+    .filter(Boolean);
+  return { srv: Boolean(m[1]), hosts };
+}
+
+function isLocalUri(uri) {
+  const { srv, hosts } = uriHosts(uri);
+  return !srv && hosts.length > 0 && hosts.every((h) => LOCAL_HOSTS.has(h));
+}
+
+/** Returns null if seeding may run, otherwise the reason it may not. */
+function seedRefusal({ argv, uri, nodeEnv }) {
+  if (!uri) return "MONGO_URI is not set.";
+  if (!argv.includes("--yes")) {
+    return `This deletes all users, queues and tickets in "${DB_NAME}". Re-run with --yes to continue.`;
+  }
+  if (!isLocalUri(uri) && nodeEnv !== "test") {
+    const where = uriHosts(uri).hosts.join(", ") || "an unrecognised host";
+    return (
+      `Refusing to seed: MONGO_URI points at ${where}, not this machine. ` +
+      "seed_db only wipes a local database (localhost or 127.0.0.1 in MONGO_URI) or runs with NODE_ENV=test. " +
+      "Point MONGO_URI at a local MongoDB to seed it."
+    );
+  }
+  return null;
+}
+
 async function main() {
-  if (!process.argv.includes("--yes")) {
-    console.error(`This deletes all users, queues and tickets in "${DB_NAME}". Re-run with --yes to continue.`);
+  require("dotenv").config({ quiet: true });
+  const refusal = seedRefusal({ argv: process.argv, uri: process.env.MONGO_URI, nodeEnv: process.env.NODE_ENV });
+  if (refusal) {
+    console.error(refusal);
     process.exit(1);
   }
-  require("dotenv").config({ quiet: true });
-  if (!process.env.MONGO_URI) throw new Error("MONGO_URI is not set");
 
   await mongoose.connect(process.env.MONGO_URI, { dbName: DB_NAME });
   try {
@@ -56,4 +95,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { seed, DEMO_PASSWORD };
+module.exports = { seed, seedRefusal, isLocalUri, DEMO_PASSWORD };

@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const HttpError = require("../utils/httpError");
 
 /**
  * Maps known error types to an HTTP status and a client-safe body.
@@ -6,6 +7,10 @@ const mongoose = require("mongoose");
  * `err.response.data.message`.
  */
 function toHttpError(err) {
+  if (err instanceof HttpError) {
+    return { status: err.status, body: { message: err.message, code: err.code } };
+  }
+
   if (err instanceof mongoose.Error.CastError) {
     return { status: 400, body: { message: `Invalid ${err.path}`, code: "INVALID_ID" } };
   }

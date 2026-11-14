@@ -62,6 +62,7 @@ describe("admin-only endpoints reject regular users with 403", () => {
   test("the queue is untouched after the rejected delete", async () => {
     await call(user, "delete", `/api/queues/${queue._id}`);
     expect(await Queue.countDocuments()).toBe(1);
+    expect((await Queue.findById(queue._id)).status).toBe("open");
   });
 });
 
@@ -71,7 +72,6 @@ describe("admins cannot join or leave queues", () => {
     expect(res.status).toBe(403);
     expect(res.body.code).toBe("FORBIDDEN");
     expect(res.body.message).toMatch(/cannot join/);
-    expect((await Queue.findById(queue._id)).users).toHaveLength(0);
     expect(await Ticket.countDocuments()).toBe(0);
   });
 
