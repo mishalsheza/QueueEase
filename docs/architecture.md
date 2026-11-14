@@ -218,8 +218,9 @@ flowchart LR
     Express["Express app<br/>/api/auth · /api/queues"]
     Protect["protect<br/>JWT → req.user"]
     Role["requireRole<br/>403 for the wrong role"]
+    Owner["requireQueueOwner<br/>403 on another admin's queue"]
     Models["Mongoose models<br/>User · Queue · Ticket"]
-    Express --> Protect --> Role --> Models
+    Express --> Protect --> Role --> Owner --> Models
   end
 
   DB[("MongoDB")]
@@ -233,6 +234,9 @@ flowchart LR
 - **Role comes from the server.** After login and on every app start, the app calls
   `GET /api/auth/me`. The role saved on the device is only a fallback when the
   server can't be reached.
+- **Admins only manage their own queues.** Call next, serve and delete check
+  that the queue belongs to the signed-in admin (403 otherwise); the queue list
+  and reports only include that admin's queues.
 - **Guards on both sides.** The client uses `Stack.Protected` to show each role only
   its own screens. The backend stays the source of truth and returns 403 for
   wrong-role requests, including admins trying to join or leave queues.

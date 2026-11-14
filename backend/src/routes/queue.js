@@ -5,6 +5,7 @@ const Ticket = require("../models/Ticket");
 const { protect } = require("../middleware/auth");
 const asyncHandler = require("../utils/asyncHandler");
 const { requireRole } = require("../middleware/requireRole");
+const { requireQueueOwner } = require("../middleware/requireQueueOwner");
 
 /**
  * Admin creates a queue
@@ -21,10 +22,12 @@ router.post("/", protect, requireRole("admin"), asyncHandler(async (req, res) =>
 }));
 
 /**
- * Get all queues
+ * List queues. Users see every queue (so they can join any); admins see only
+ * the queues they own, which are the only ones they can manage.
  */
 router.get("/", protect, asyncHandler(async (req, res) => {
-  const queues = await Queue.find().populate("admin", "name email");
+  const filter = req.user.role === "admin" ? { admin: req.user._id } : {};
+  const queues = await Queue.find(filter).populate("admin", "name email");
   res.json(queues);
 }));
 
@@ -205,9 +208,8 @@ router.get("/:queueId/position", protect, asyncHandler(async (req, res) => {
 /**
  * Admin calls next user
  */
-router.post("/:queueId/call-next", protect, requireRole("admin"), asyncHandler(async (req, res) => {
-  const queue = await Queue.findById(req.params.queueId);
-  if (!queue) return res.status(404).json({ message: "Queue not found" });
+router.post("/:queueId/call-next", protect, requireRole("admin"), requireQueueOwner, asyncHandler(async (req, res) => {
+  const queue = req.queue; // loaded and ownership-checked by requireQueueOwner
 
   if (queue.users.length > 0) {
     // 1. If someone is already being served, mark them as served automatically
@@ -261,9 +263,8 @@ router.post("/:queueId/call-next", protect, requireRole("admin"), asyncHandler(a
 /**
  * Admin marks current user as served (Completed)
  */
-router.post("/:queueId/serve", protect, requireRole("admin"), asyncHandler(async (req, res) => {
-  const queue = await Queue.findById(req.params.queueId);
-  if (!queue) return res.status(404).json({ message: "Queue not found" });
+router.post("/:queueId/serve", protect, requireRole("admin"), requireQueueOwner, asyncHandler(async (req, res) => {
+  const queue = req.queue; // loaded and ownership-checked by requireQueueOwner
 
   if (queue.nowServing && queue.nowServing.user) {
     const servedUserId = queue.nowServing.user;
@@ -292,10 +293,13 @@ router.post("/:queueId/serve", protect, requireRole("admin"), asyncHandler(async
   }
 }));
 
-// Admin: Get ALL users report (Waiting, Serving, Served, Cancelled)
+/** Ids of the queues the signed-in admin owns. Reports are limited to these. */
+const ownQueueIds = (adminId) => Queue.find({ admin: adminId }).distinct("_id");
+
+// Admin: users report (waiting, serving, served, cancelled) for the admin's own queues
 router.get("/admin/users-report", protect, requireRole("admin"), asyncHandler(async (req, res) => {
-  // Fetch all tickets to show history + active
-  const tickets = await Ticket.find()
+  const queueIds = await ownQueueIds(req.user._id);
+  const tickets = await Ticket.find({ queue: { $in: queueIds } })
     .populate("user", "name email")
     .populate("queue", "users")
     .sort({ createdAt: -1 });
@@ -332,10 +336,11 @@ router.get("/admin/users-report", protect, requireRole("admin"), asyncHandler(as
 }));
 
 /**
- * Admin: Get recently completed tickets
+ * Admin: recently completed tickets from the admin's own queues
  */
 router.get("/admin/completed-report", protect, requireRole("admin"), asyncHandler(async (req, res) => {
-  const tickets = await Ticket.find({ status: "served" })
+  const queueIds = await ownQueueIds(req.user._id);
+  const tickets = await Ticket.find({ status: "served", queue: { $in: queueIds } })
     .populate("user", "name email")
     .sort({ completedAt: -1 })
     .limit(20);
@@ -346,11 +351,8 @@ router.get("/admin/completed-report", protect, requireRole("admin"), asyncHandle
 /**
  * Admin deletes a queue
  */
-router.delete("/:queueId", protect, requireRole("admin"), asyncHandler(async (req, res) => {
-  const queue = await Queue.findByIdAndDelete(req.params.queueId);
-  if (!queue) {
-    return res.status(404).json({ message: "Queue not found" });
-  }
+router.delete("/:queueId", protect, requireRole("admin"), requireQueueOwner, asyncHandler(async (req, res) => {
+  await req.queue.deleteOne(); // ownership checked by requireQueueOwner
 
   // Also delete associated tickets if needed, or keep for history.
   // For now, we'll keep history or maybe mark them orphan. 
