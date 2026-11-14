@@ -46,6 +46,19 @@ type QueueType = {
   };
 };
 
+// Grace period before a called person shows as overdue. Same rules as the API.
+const DEFAULT_GRACE_MINUTES = 5;
+const MIN_GRACE_MINUTES = 1;
+const MAX_GRACE_MINUTES = 120;
+
+/** Whole minutes from 1 to 120, or null if the text isn't one. */
+const parseGraceMinutes = (text: string) => {
+  const t = text.trim();
+  if (!/^\d+$/.test(t)) return null;
+  const n = Number(t);
+  return n >= MIN_GRACE_MINUTES && n <= MAX_GRACE_MINUTES ? n : null;
+};
+
 /** "just now", "1 min ago", "12 min ago". */
 const minutesAgo = (iso: string | undefined, now: number) => {
   if (!iso) return null;
@@ -74,6 +87,7 @@ export default function AdminDashboard() {
     name: '',
     type: 'Dental Care' as const,
     section: 'A' as const,
+    graceMinutes: String(DEFAULT_GRACE_MINUTES), // text while typing, checked on create
   });
 
   const [isConnected, setIsConnected] = useState(socket.connected);
@@ -142,20 +156,27 @@ export default function AdminDashboard() {
       return;
     }
 
+    const graceMinutes = parseGraceMinutes(newQueue.graceMinutes);
+    if (graceMinutes === null) {
+      showAlert('Error', `Grace period must be a whole number of minutes from ${MIN_GRACE_MINUTES} to ${MAX_GRACE_MINUTES}`);
+      return;
+    }
+
     try {
       const res = await api.post('/queues', { 
         name: newQueue.name,
         type: newQueue.type,
-        section: newQueue.section
+        section: newQueue.section,
+        graceMinutes,
       });
       
       setQueues([...queues, res.data]);
-      setNewQueue({ name: '', type: 'Dental Care', section: 'A' });
+      setNewQueue({ name: '', type: 'Dental Care', section: 'A', graceMinutes: String(DEFAULT_GRACE_MINUTES) });
       setShowCreateModal(false);
       showAlert('Success', `Queue "${newQueue.name}" created successfully!`);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error creating queue:', err);
-      showAlert('Error', 'Failed to create queue');
+      showAlert('Error', err.response?.data?.message || 'Failed to create queue');
     }
   };
 
@@ -293,6 +314,8 @@ export default function AdminDashboard() {
             <TouchableOpacity 
               style={styles.headerCreateButton}
               onPress={() => setShowCreateModal(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Create queue"
             >
               <Ionicons name="add-circle" size={24} color="white" />
             </TouchableOpacity>
@@ -562,6 +585,22 @@ export default function AdminDashboard() {
                     </TouchableOpacity>
                   ))}
                 </View>
+              </View>
+
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Grace period (minutes)</Text>
+                <TextInput
+                  style={styles.input}
+                  value={newQueue.graceMinutes}
+                  onChangeText={(text) => setNewQueue({ ...newQueue, graceMinutes: text })}
+                  keyboardType="number-pad"
+                  maxLength={3}
+                  placeholder={String(DEFAULT_GRACE_MINUTES)}
+                  accessibilityLabel="Grace period in minutes"
+                />
+                <Text style={styles.inputHint}>
+                  {`How long after being called someone shows as overdue (${MIN_GRACE_MINUTES}–${MAX_GRACE_MINUTES}).`}
+                </Text>
               </View>
 
               <TouchableOpacity
@@ -1025,6 +1064,11 @@ const styles = StyleSheet.create({
     padding: 12,
     fontSize: 16,
     color: '#333',
+  },
+  inputHint: {
+    fontSize: 12,
+    color: '#888',
+    marginTop: 6,
   },
   typeButtons: {
     flexDirection: 'row',

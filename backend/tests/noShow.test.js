@@ -226,8 +226,19 @@ describe("grace period", () => {
     expect((await Queue.findById(q._id)).graceMinutes).toBe(5);
   });
 
-  test("an invalid grace at creation -> 400", async () => {
-    expect((await as(admin).post("/api/queues", { name: "Bad", graceMinutes: 0 })).status).toBe(400);
+  test.each([[0], [121], [2.5], ["abc"]])("graceMinutes %p at creation -> 400, no queue created", async (graceMinutes) => {
+    const res = await as(admin).post("/api/queues", { name: "Bad", graceMinutes });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe("VALIDATION_ERROR");
+    expect(await Queue.countDocuments({ name: "Bad" })).toBe(0);
+  });
+
+  test.each([[1], [120]])("graceMinutes %p at creation (range edges) is accepted", async (graceMinutes) => {
+    expect((await as(admin).post("/api/queues", { name: "Edge", graceMinutes })).body.graceMinutes).toBe(graceMinutes);
+  });
+
+  test("no graceMinutes at creation -> 5", async () => {
+    expect((await as(admin).post("/api/queues", { name: "Default" })).body.graceMinutes).toBe(5);
   });
 
   test("being overdue never marks a no-show by itself", async () => {

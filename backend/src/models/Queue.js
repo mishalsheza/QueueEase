@@ -28,7 +28,13 @@ const queueSchema = new mongoose.Schema(
 
     // Minutes after being called before the person shows as overdue on the
     // admin dashboard. Only a hint: marking a no-show stays manual.
-    graceMinutes: { type: Number, default: 5, min: 1, max: 120 },
+    graceMinutes: {
+      type: Number,
+      default: 5,
+      min: 1,
+      max: 120,
+      validate: { validator: Number.isInteger, message: "graceMinutes must be a whole number" },
+    },
 
     servedToday: { type: Number, default: 0 },
     avgProcessTime: { type: Number, default: 15 },
