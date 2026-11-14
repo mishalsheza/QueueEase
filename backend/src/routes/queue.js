@@ -33,6 +33,7 @@ router.post("/", protect, requireRole("admin"), asyncHandler(async (req, res) =>
     admin: req.user._id,
     type: req.body.type || "General Checkup",
     section: req.body.section || "A",
+    ...(req.body.graceMinutes !== undefined && { graceMinutes: req.body.graceMinutes }),
   });
   res.status(201).json(await svc.withLiveState(queue));
 }));
@@ -52,7 +53,7 @@ router.get("/my-status", protect, asyncHandler(async (req, res) => {
 
 /** Signed-in user's served/cancelled tickets. */
 router.get("/my-history", protect, asyncHandler(async (req, res) => {
-  const tickets = await Ticket.find({ user: req.user._id, status: { $in: ["served", "cancelled"] } })
+  const tickets = await Ticket.find({ user: req.user._id, status: { $in: ["served", "cancelled", "no_show"] } })
     .sort({ createdAt: -1 });
   res.json(tickets);
 }));
@@ -83,11 +84,29 @@ router.post("/:queueId/call-next", protect, requireRole("admin"), requireQueueOw
   res.json({ message: "Next user called", queue });
 }));
 
-/** Admin marks the person at the counter as served. */
+/**
+ * Admin marks the person at the counter as served. Optional body
+ * { ticketId }: 409 if that ticket is no longer at the counter.
+ */
 router.post("/:queueId/serve", protect, requireRole("admin"), requireQueueOwner, asyncHandler(async (req, res) => {
-  const queue = await svc.serveCurrent(req.queue);
+  const queue = await svc.serveCurrent(req.queue, req.body && req.body.ticketId);
   notify(req, queue);
   res.json({ message: "User served", queue });
+}));
+
+/**
+ * Admin marks the person at the counter as a no-show. Optional body
+ * { ticketId }. Atomic with serve: if both happen at once, one gets 409.
+ */
+router.post("/:queueId/no-show", protect, requireRole("admin"), requireQueueOwner, asyncHandler(async (req, res) => {
+  const { ticket, queue } = await svc.markNoShow(req.queue, req.body && req.body.ticketId);
+  notify(req, queue);
+  res.json({ message: "Marked as no-show", token: ticket.token, queue });
+}));
+
+/** Admin changes queue settings: body { graceMinutes } (1-120). */
+router.patch("/:queueId/settings", protect, requireRole("admin"), requireQueueOwner, asyncHandler(async (req, res) => {
+  res.json({ message: "Settings saved", queue: await svc.updateSettings(req.queue, req.body) });
 }));
 
 /** Admin pauses or resumes a queue: body { status: "paused" | "open" }. */
@@ -113,6 +132,11 @@ router.delete("/:queueId", protect, requireRole("admin"), requireQueueOwner, clo
 /** Admin: every ticket in the admin's own queues, including closed ones. */
 router.get("/admin/users-report", protect, requireRole("admin"), asyncHandler(async (req, res) => {
   res.json(await svc.usersReport(req.user));
+}));
+
+/** Admin: ticket counts by status (no-shows separate), overall and per queue. */
+router.get("/admin/stats", protect, requireRole("admin"), asyncHandler(async (req, res) => {
+  res.json(await svc.statsReport(req.user));
 }));
 
 /** Admin: recently served tickets from the admin's own queues. */

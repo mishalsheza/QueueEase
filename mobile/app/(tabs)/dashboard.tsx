@@ -20,6 +20,9 @@ import { socket } from '@/lib/socket';
 
 const { width } = Dimensions.get('window');
 
+// "called" is what call-next sets now; "serving" is the older name for the same thing.
+const atCounter = (status?: string) => status === 'called' || status === 'serving';
+
 export default function HomeScreen() {
   const { signOut } = useAuth();
   const [activeTickets, setActiveTickets] = useState<any[]>([]);
@@ -137,7 +140,7 @@ export default function HomeScreen() {
   };
 
   // Derive active and history tickets
-  const currentTickets = activeTickets.filter(t => t.status === 'waiting' || t.status === 'serving');
+  const currentTickets = activeTickets.filter(t => t.status === 'waiting' || atCounter(t.status));
   // Only show served tickets in history, hide cancelled ones as per user request
   const historyTickets = activeTickets.filter(t => t.status === 'served');
 
@@ -203,13 +206,13 @@ export default function HomeScreen() {
                   <Text style={styles.infoLabel}>Position</Text>
                   <View style={[
                     styles.positionBadge,
-                    ticket.status === 'serving' && { backgroundColor: '#e8f5e9' }
+                    atCounter(ticket.status) && { backgroundColor: '#e8f5e9' }
                   ]}>
                     <Text style={[
                       styles.positionText,
-                      ticket.status === 'serving' && { color: '#2e7d32' }
+                      atCounter(ticket.status) && { color: '#2e7d32' }
                     ]}>
-                      {ticket.status === 'serving' ? 'Proceed to Counter' : 
+                      {atCounter(ticket.status) ? 'Proceed to Counter' : 
                        `${ticket.position}th in Line`}
                     </Text>
                   </View>
@@ -227,7 +230,7 @@ export default function HomeScreen() {
               
               <View style={[
                 styles.activeStatus,
-                ticket.status === 'serving' && { backgroundColor: '#4CAF50' }
+                atCounter(ticket.status) && { backgroundColor: '#4CAF50' }
               ]}>
                 <View style={styles.activeDot} />
                 <Text style={styles.activeText}>{ticket.status ? ticket.status.toUpperCase() : 'ACTIVE'}</Text>
@@ -313,7 +316,7 @@ export default function HomeScreen() {
         <View style={styles.availableSection}>
           {availableQueues.length > 0 ? (
             availableQueues.map((queue) => {
-              const isInThisQueue = activeTickets.some(t => t.queueId === queue._id && (t.status === 'waiting' || t.status === 'serving'));
+              const isInThisQueue = activeTickets.some(t => t.queueId === queue._id && (t.status === 'waiting' || atCounter(t.status)));
               return (
                 <View key={queue._id} style={styles.queueCard}>
                   <View style={styles.queueInfo}>

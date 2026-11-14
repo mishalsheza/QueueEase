@@ -376,7 +376,8 @@ flowchart LR
 |---|---|
 | Every token in a queue is unique | `lastSeq` is reserved with one atomic `$inc` on join. Unique index on `(queue, seq)`. |
 | A user can't hold two places in one queue (double taps) | Unique partial index on `(queue, user)` where `active: true`. The losing request returns the existing ticket (join stays idempotent). |
-| Only one person at the counter | Unique partial index on `queue` where `status: "serving"`. A concurrent second call-next gets 409 and nobody is skipped. |
+| Only one person at the counter | Unique partial index on `queue` where `atCounter: true` (called or serving). A concurrent second call-next gets 409 and nobody is skipped. |
+| Serve and no-show can't both apply | Both are one `findOneAndUpdate` on the ticket where `atCounter: true` (and its `_id`, which the app sends). The first update takes it off the counter, so the other matches nothing and gets 409. |
 | Paused/closed queues reject joins | The `$inc` that reserves a number only matches `status: "open"`. |
 | A join racing a close leaves nothing behind | After inserting, join re-reads the status and cancels its own ticket if the queue was closed meanwhile. |
 | List and tickets can't disagree | There is no list any more. `users`, `nowServing`, `waitingCount` and `nextToken` in API responses are computed from tickets. |
@@ -441,7 +442,11 @@ sequenceDiagram
 | `POST /api/queues/:id/close` | **New.** Closes the queue. Owner only. Returns `{ message, cancelled, servedCurrent }`. |
 | `DELETE /api/queues/:id` | Now an alias for close. The queue document and its tickets are kept. |
 | `POST /api/queues/:id/join` | 409 when the queue is paused or closed. |
-| `GET /api/queues` and queue responses | Add `status`, `waitingCount`, `nextToken`. `users` and `nowServing` keep their shape but are computed from tickets. Closed queues are left out. |
+| `POST /api/queues/:id/no-show` | **New.** Owner only. Optional body `{ ticketId }`. 409 if that ticket already left the counter, 400 if nobody is there. |
+| `POST /api/queues/:id/serve` | Accepts the same optional `{ ticketId }` (409 if it already left the counter). |
+| `PATCH /api/queues/:id/settings` | **New.** Owner only. `{ graceMinutes }` from 1 to 120 (default 5). Also accepted on create. |
+| `GET /api/queues/admin/stats` | **New.** Ticket counts per status for the admin's queues, overall and per queue, with `noShow` counted on its own. |
+| `GET /api/queues` and queue responses | Add `status`, `graceMinutes`, `waitingCount`, `nextToken`. `nowServing` carries `ticketId`, `status` and `calledAt`. `users` and `nowServing` keep their shape but are computed from tickets. Closed queues are left out. |
 | `GET /api/queues/my-status` | Adds `queueStatus`. Positions come from ticket order. |
 | Admin reports | Include tickets from closed queues. |
 
@@ -450,7 +455,50 @@ Existing databases are moved to the new model with
 never deletes data, numbers existing tickets in join order, and cleans up
 leftovers of the old double-join bug.
 
-### 3.6 Concurrency numbers (before / after)
+### 3.6 Ticket states and no-shows
+
+```mermaid
+stateDiagram-v2
+  [*] --> waiting: join
+  waiting --> cancelled: leave, or queue closed
+  waiting --> called: call next (calledAt)
+  called --> served: serve, or call next again
+  called --> no_show: Mark no-show (admin)
+  served --> [*]
+  cancelled --> [*]
+  no_show --> [*]
+```
+
+- `called` is what call-next sets. `serving` is the older name for the same
+  state, still accepted for tickets created before this change.
+- **Mark no-show** is manual and owner-only. The ticket leaves the queue, the
+  counter is free, and the admin calls next as usual. A no-show isn't counted
+  in `servedToday`. The user sees NO-SHOW in their history and can join again
+  with a new ticket.
+- **Grace period** (`graceMinutes`, per queue, default 5): once someone has
+  been called for longer than this, the admin dashboard shows "overdue" next
+  to "Called N min ago". It is only a hint.
+
+**What automatic no-show would take** (not built):
+
+1. **Something that runs on a timer.** The API only acts on requests today.
+   Either a sweep with `setInterval` in the server process, or a job queue
+   (Agenda, which stores jobs in MongoDB, or BullMQ, which needs Redis) that
+   schedules a check at `calledAt + graceMinutes`.
+2. **The same atomic update as the manual button**, with
+   `calledAt < now - grace` added to the filter. That makes it safe if the
+   sweep runs on several server instances or races the admin pressing serve:
+   only one update can match.
+3. **A policy decision:** after an automatic no-show, should the next person
+   be called automatically? If yes, the counter can move on with no staff
+   there. Paused queues probably shouldn't auto-expire.
+4. **Telling the user before it happens.** A "you're being called" push or
+   socket message, and a warning shortly before the grace period ends.
+   Otherwise people get marked absent without knowing they were called. This
+   depends on authenticated, per-user sockets (A5) or push notifications.
+5. **Tests with a fake clock** (Jest fake timers) for the sweep.
+
+### 3.7 Concurrency numbers (before / after)
 
 Measured with [`backend/bench/concurrency.js`](../backend/bench/concurrency.js)
 (`npm run bench:concurrency`). It runs the real Express app against a throwaway

@@ -17,7 +17,7 @@ type TicketHistory = {
   _id: string;
   queueName: string;
   token: string;
-  status: 'served' | 'cancelled';
+  status: 'served' | 'cancelled' | 'no_show';
   joinedAt: string;
   completedAt?: string;
 };
@@ -114,7 +114,7 @@ const ProfileScreen = () => {
                       styles.statusText,
                       ticket.status === 'served' ? styles.servedText : styles.cancelledText
                     ]}>
-                      {ticket.status.toUpperCase()}
+                      {ticket.status === 'no_show' ? 'NO-SHOW' : ticket.status.toUpperCase()}
                     </Text>
                   </View>
                 </View>

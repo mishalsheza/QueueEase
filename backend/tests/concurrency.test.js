@@ -62,7 +62,7 @@ test("two call-nexts at the same moment never put two people at the counter or l
   expect(res.filter((r) => r.status >= 500)).toHaveLength(0);
   expect(res.every((r) => r.status === 200 || r.status === 409)).toBe(true);
 
-  expect(await Ticket.countDocuments({ queue: q._id, status: "serving" })).toBe(1);
+  expect(await Ticket.countDocuments({ queue: q._id, atCounter: true })).toBe(1);
   const counts = await Ticket.aggregate([{ $match: { queue: new mongoose.Types.ObjectId(q._id) } }, { $group: { _id: "$status", n: { $sum: 1 } } }]);
   const total = counts.reduce((s, c) => s + c.n, 0);
   expect(total).toBe(5); // every ticket is still accounted for

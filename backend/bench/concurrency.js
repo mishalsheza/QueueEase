@@ -85,7 +85,7 @@ async function inspect(admin, queueId) {
   tickets.forEach((t) => (tokenCounts[t.token] = (tokenCounts[t.token] || 0) + 1));
   const duplicateTokens = Object.values(tokenCounts).reduce((s, c) => s + (c > 1 ? c - 1 : 0), 0);
 
-  const active = tickets.filter((t) => t.status === "waiting" || t.status === "serving");
+  const active = tickets.filter((t) => ["waiting", "called", "serving"].includes(t.status));
   const activePerUser = {};
   active.forEach((t) => (activePerUser[t.userId] = (activePerUser[t.userId] || 0) + 1));
   const extraTickets = Object.values(activePerUser).reduce((s, c) => s + (c > 1 ? c - 1 : 0), 0);

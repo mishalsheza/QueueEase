@@ -20,7 +20,7 @@ type UserInQueue = {
   token: string;
   queueName: string;
   joinedAt: string;
-  status: 'waiting' | 'serving' | 'served' | 'cancelled';
+  status: 'waiting' | 'called' | 'serving' | 'served' | 'cancelled' | 'no_show';
   position: number;
   waitTime: number;
   queueId: string;
@@ -64,9 +64,11 @@ export default function UsersScreen() {
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'waiting': return '#FFA000'; // Amber
+      case 'called':
       case 'serving': return '#2196F3'; // Blue
       case 'served': return '#4CAF50';  // Green
       case 'cancelled': return '#F44336'; // Red
+      case 'no_show': return '#8E24AA'; // Purple, distinct from cancelled
       default: return '#666';
     }
   };
@@ -74,7 +76,9 @@ export default function UsersScreen() {
   const getStatusText = (status: string) => {
     switch (status) {
       case 'waiting': return 'WAITING';
+      case 'called': return 'CALLED';
       case 'serving': return 'SERVING';
+      case 'no_show': return 'NO-SHOW';
       case 'served': return 'COMPLETED';
       case 'cancelled': return 'CANCELLED';
       default: return status.toUpperCase();
@@ -115,6 +119,10 @@ export default function UsersScreen() {
         <View style={styles.statCard}>
           <Text style={styles.statNumber}>{users.filter(u => u.status === 'cancelled').length}</Text>
           <Text style={styles.statLabel}>Cancelled Today</Text>
+        </View>
+        <View style={styles.statCard}>
+          <Text style={styles.statNumber}>{users.filter(u => u.status === 'no_show').length}</Text>
+          <Text style={styles.statLabel}>No-shows</Text>
         </View>
       </View>
 

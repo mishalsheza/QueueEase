@@ -36,11 +36,21 @@ type QueueType = {
   servedToday: number;
   cancelledToday: number;
   users: { user: string; joinedAt: string }[];
+  graceMinutes: number;
   nowServing?: {
+    ticketId: string;
     user: string;
     token: string;
-    startedAt: string;
+    status: 'called' | 'serving';
+    calledAt?: string;
   };
+};
+
+/** "just now", "1 min ago", "12 min ago". */
+const minutesAgo = (iso: string | undefined, now: number) => {
+  if (!iso) return null;
+  const mins = Math.max(0, Math.floor((now - new Date(iso).getTime()) / 60000));
+  return { mins, label: mins === 0 ? 'just now' : `${mins} min ago` };
 };
 
 // User in queue type
@@ -67,6 +77,13 @@ export default function AdminDashboard() {
   });
 
   const [isConnected, setIsConnected] = useState(socket.connected);
+
+  // Ticks so "called N min ago" and the overdue hint stay current.
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 15000);
+    return () => clearInterval(id);
+  }, []);
 
   // Data fetching initialization
   useFocusEffect(
@@ -166,15 +183,42 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleServe = async (queueId: string) => {
+  // ticketId makes the request apply only to the person shown on screen: if
+  // they were already served or marked no-show elsewhere, the server says 409.
+  const handleServe = async (queueId: string, ticketId?: string) => {
     try {
-      await api.post(`/queues/${queueId}/serve`);
+      await api.post(`/queues/${queueId}/serve`, { ticketId });
       fetchQueues();
       showAlert('Success', 'Customer marked as completed.');
     } catch (err: any) {
       console.error('Error serving:', err);
       showAlert('Error', err.response?.data?.message || 'Failed to serve customer.');
     }
+  };
+
+  const performNoShow = async (queueId: string, ticketId: string) => {
+    try {
+      const res = await api.post(`/queues/${queueId}/no-show`, { ticketId });
+      fetchQueues();
+      showAlert('Marked as no-show', `${res.data?.token ?? 'The ticket'} has left the queue. Call next when ready.`);
+    } catch (err: any) {
+      console.error('Error marking no-show:', err);
+      showAlert('Error', err.response?.data?.message || 'Failed to mark as no-show.');
+      fetchQueues();
+    }
+  };
+
+  const handleNoShow = (queue: QueueType) => {
+    const current = queue.nowServing;
+    if (!current) return;
+    showAlert(
+      'Mark no-show?',
+      `${current.token} didn't come to the counter? Their ticket will leave the queue and show as NO-SHOW in their history.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Mark no-show', style: 'destructive', onPress: () => performNoShow(queue._id, current.ticketId) },
+      ]
+    );
   };
 
   // Pause/Resume is stored on the server: a paused queue rejects new joins
@@ -327,12 +371,34 @@ export default function AdminDashboard() {
               <View style={styles.tokenInfo}>
                 <Text style={styles.tokenLabel}>SERVING</Text>
                 <Text style={styles.tokenValue}>{queue.nowServing?.token || '--'}</Text>
+                {(() => {
+                  const ago = minutesAgo(queue.nowServing?.calledAt, now);
+                  if (!ago) return null;
+                  const overdue = ago.mins >= (queue.graceMinutes ?? 5);
+                  return (
+                    <Text style={[styles.calledAgo, overdue && styles.overdue]}>
+                      {`Called ${ago.label}`}{overdue ? ' · overdue' : ''}
+                    </Text>
+                  );
+                })()}
               </View>
               <View style={styles.tokenInfo}>
                 <Text style={styles.tokenLabel}>NEXT</Text>
                 <Text style={styles.tokenValue}>{queue.nextToken || '--'}</Text>
               </View>
             </View>
+
+            {queue.nowServing && (
+              <TouchableOpacity
+                style={styles.noShowButton}
+                onPress={() => handleNoShow(queue)}
+                accessibilityRole="button"
+                accessibilityLabel={`Mark ${queue.nowServing.token} as no-show`}
+              >
+                <Ionicons name="person-remove-outline" size={14} color="#D32F2F" />
+                <Text style={styles.noShowText}>Mark no-show</Text>
+              </TouchableOpacity>
+            )}
 
             <View style={styles.counterActions}>
               <TouchableOpacity
@@ -360,7 +426,7 @@ export default function AdminDashboard() {
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.actionButton, styles.serveAction]}
-                onPress={() => handleServe(queue._id)}
+                onPress={() => handleServe(queue._id, queue.nowServing?.ticketId)}
                 disabled={!queue.nowServing}
               >
                 <Ionicons name="checkmark-circle" size={16} color="white" />
@@ -732,6 +798,34 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: 'bold',
     color: '#333',
+  },
+  calledAgo: {
+    fontSize: 11,
+    color: '#666',
+    marginTop: 4,
+  },
+  overdue: {
+    color: '#D32F2F',
+    fontWeight: '600',
+  },
+  noShowButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 6,
+    marginTop: -10,
+    marginBottom: 14,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#F5C2C0',
+    backgroundColor: '#FFF5F5',
+  },
+  noShowText: {
+    color: '#D32F2F',
+    fontSize: 12,
+    fontWeight: '600',
   },
   counterActions: {
     flexDirection: 'row',

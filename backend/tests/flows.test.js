@@ -77,7 +77,7 @@ describe("queue lifecycle", () => {
     expect(next.body.queue.nowServing.user).toBe(u1.user._id.toString());
 
     const status = await as(u1).get("/api/queues/my-status");
-    expect(status.body[0]).toMatchObject({ status: "serving", position: 0 });
+    expect(status.body[0]).toMatchObject({ status: "called", position: 0 });
 
     expect((await as(admin).post(`/api/queues/${qid}/serve`)).status).toBe(200);
     const history = await as(u1).get("/api/queues/my-history");

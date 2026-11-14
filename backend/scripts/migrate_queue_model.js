@@ -18,6 +18,12 @@
  *            are cancelled; a queue with several "serving" tickets keeps the
  *            latest, the others become served.
  *   Indexes  creates the unique indexes the new code relies on.
+ *
+ * No-show update (safe to re-run on a database already migrated for A4):
+ *   Tickets  `atCounter` set for tickets that are called or serving.
+ *   Queues   graceMinutes 5 if missing.
+ *   Indexes  drops the old "one serving ticket per queue" index (queue_1),
+ *            replaced by one_at_counter_per_queue.
  */
 const mongoose = require("mongoose");
 const Queue = require("../src/models/Queue");
@@ -25,6 +31,8 @@ const Ticket = require("../src/models/Ticket");
 const { DB_NAME } = require("../src/config/db");
 
 const ACTIVE = Ticket.ACTIVE_STATUSES;
+const AT_COUNTER = Ticket.AT_COUNTER_STATUSES;
+const LEGACY_INDEX = "queue_1";
 const prefix = (name) => (name && name.length > 0 ? name.charAt(0).toUpperCase() : "Q");
 
 async function migrate({ apply }) {
@@ -35,8 +43,10 @@ async function migrate({ apply }) {
     ticketsCreatedFromOldList: 0,
     ticketsNumbered: 0,
     ticketsActiveFlagSet: 0,
+    ticketsCounterFlagSet: 0,
     duplicateActiveCancelled: 0,
     extraServingCompleted: 0,
+    legacyIndexesDropped: 0,
   };
   const now = new Date();
 
@@ -110,8 +120,8 @@ async function migrate({ apply }) {
       if (t._id) updates.push({ updateOne: { filter: { _id: t._id }, update: { $set: { status: "cancelled", active: false, completedAt: now } } } });
     }
 
-    // 4. More than one person "serving": keep the latest, complete the rest.
-    const serving = all.filter((t) => t.status === "serving").sort((a, b) => (b.startedAt || b.createdAt || 0) - (a.startedAt || a.createdAt || 0));
+    // 4. More than one person at the counter: keep the latest, complete the rest.
+    const serving = all.filter((t) => AT_COUNTER.includes(t.status)).sort((a, b) => (b.startedAt || b.createdAt || 0) - (a.startedAt || a.createdAt || 0));
     for (const t of serving.slice(1)) {
       report.extraServingCompleted += 1;
       t.status = "served";
@@ -119,9 +129,21 @@ async function migrate({ apply }) {
       if (t._id) updates.push({ updateOne: { filter: { _id: t._id }, update: { $set: { status: "served", active: false, completedAt: now } } } });
     }
 
-    // 5. The queue document itself.
+    // 5. atCounter follows the final status.
+    for (const t of all) {
+      const want = AT_COUNTER.includes(t.status);
+      if (!t._id) {
+        t.atCounter = want; // new ticket, inserted below
+      } else if (t.atCounter !== want) {
+        report.ticketsCounterFlagSet += 1;
+        updates.push({ updateOne: { filter: { _id: t._id }, update: { $set: { atCounter: want } } } });
+      }
+    }
+
+    // 6. The queue document itself.
     const queueSet = {};
     if (!q.status) queueSet.status = "open";
+    if (typeof q.graceMinutes !== "number") queueSet.graceMinutes = 5;
     if (q.lastSeq !== seq) queueSet.lastSeq = seq;
     const queueUnset = {};
     if ("users" in q) queueUnset.users = "";
@@ -139,6 +161,12 @@ async function migrate({ apply }) {
         await queues.updateOne({ _id: q._id }, update);
       }
     }
+  }
+
+  const legacy = (await tickets.indexes().catch(() => [])).find((i) => i.name === LEGACY_INDEX);
+  if (legacy) {
+    report.legacyIndexesDropped = 1;
+    if (apply) await tickets.dropIndex(LEGACY_INDEX);
   }
 
   if (apply) {

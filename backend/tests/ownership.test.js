@@ -43,10 +43,10 @@ describe("another admin cannot manage my queue", () => {
     expect(res.body).toEqual(FORBIDDEN);
 
     expect(await Ticket.countDocuments({ queue: qA._id, status: "waiting" })).toBe(2);
-    expect(await Ticket.countDocuments({ queue: qA._id, status: "serving" })).toBe(0);
+    expect(await Ticket.countDocuments({ queue: qA._id, atCounter: true })).toBe(0);
   });
 
-  test("serve on another admin's queue -> 403, current ticket stays serving", async () => {
+  test("serve on another admin's queue -> 403, current ticket stays at the counter", async () => {
     await as(adminA).post(`/api/queues/${qA._id}/call-next`); // u1 now serving
 
     const res = await as(adminB).post(`/api/queues/${qA._id}/serve`);
@@ -55,7 +55,7 @@ describe("another admin cannot manage my queue", () => {
 
     const q = await Queue.findById(qA._id);
     expect(q.servedToday).toBe(0);
-    expect((await Ticket.findOne({ user: u1.user._id })).status).toBe("serving");
+    expect((await Ticket.findOne({ user: u1.user._id })).status).toBe("called");
   });
 
   test("delete another admin's queue -> 403, queue still exists", async () => {

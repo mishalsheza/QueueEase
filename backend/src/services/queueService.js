@@ -13,6 +13,7 @@ const Ticket = require("../models/Ticket");
 const HttpError = require("../utils/httpError");
 
 const AFTER = { returnDocument: "after" };
+const FINISHED_STATUSES = ["served", "cancelled", "no_show"];
 const isDuplicateKey = (err, field) => err && err.code === 11000 && (!field || (err.keyPattern && field in err.keyPattern));
 const tokenPrefix = (name) => (name && name.length > 0 ? name.charAt(0).toUpperCase() : "Q");
 
@@ -30,7 +31,8 @@ const notAccepting = (status) =>
  * Adds the live state to queue documents, in the response shape the app
  * already uses:
  *   users:      [{ user, joinedAt, token }] waiting, in order
- *   nowServing: { user, token, startedAt } or undefined
+ *   nowServing: { ticketId, user, token, status, calledAt } or undefined
+ *               (the person at the counter: called, or legacy serving)
  *   waitingCount, nextToken
  * One query for all queues, so a list doesn't cost a query per queue.
  */
@@ -39,13 +41,13 @@ async function withLiveState(queues) {
   const ids = list.map((q) => q._id);
   const active = await Ticket.find({ queue: { $in: ids }, active: true })
     .sort({ seq: 1, createdAt: 1 })
-    .select("queue user token status joinedAt startedAt")
+    .select("queue user token status atCounter joinedAt calledAt startedAt")
     .lean();
 
   const byQueue = new Map(ids.map((id) => [String(id), { waiting: [], serving: null }]));
   for (const t of active) {
     const entry = byQueue.get(String(t.queue));
-    if (t.status === "serving") entry.serving = t;
+    if (t.atCounter) entry.serving = t;
     else entry.waiting.push(t);
   }
 
@@ -55,7 +57,15 @@ async function withLiveState(queues) {
     return {
       ...doc,
       users: waiting.map((t) => ({ user: t.user, joinedAt: t.joinedAt, token: t.token })),
-      nowServing: serving ? { user: serving.user, token: serving.token, startedAt: serving.startedAt } : undefined,
+      nowServing: serving
+        ? {
+            ticketId: serving._id,
+            user: serving.user,
+            token: serving.token,
+            status: serving.status,
+            calledAt: serving.calledAt || serving.startedAt,
+          }
+        : undefined,
       waitingCount: waiting.length,
       nextToken: waiting.length > 0 ? waiting[0].token : null,
     };
@@ -169,7 +179,7 @@ async function userStatus(user) {
   const activeStatus = await Promise.all(
     tickets.map(async (t) => {
       const q = queueById.get(String(t.queue));
-      const serving = t.status === "serving";
+      const serving = t.atCounter;
       const position = serving ? 0 : await positionOf(t);
       return {
         queueId: t.queue,
@@ -177,6 +187,7 @@ async function userStatus(user) {
         queueStatus: q ? q.status : undefined,
         position,
         status: t.status,
+        calledAt: t.calledAt,
         totalInQueue: q ? q.waitingCount : 0,
         token: t.token,
         estimatedWaitTime: serving ? 0 : (position - 1) * 5,
@@ -188,7 +199,7 @@ async function userStatus(user) {
 
   const recent = await Ticket.find({
     user: user._id,
-    status: { $in: ["served", "cancelled"] },
+    status: { $in: FINISHED_STATUSES },
     completedAt: { $gte: new Date(Date.now() - 10 * 60 * 1000) },
   }).sort({ completedAt: -1 });
 
@@ -211,24 +222,48 @@ async function userStatus(user) {
 // Admin actions (ownership is checked by requireQueueOwner before these run)
 // ---------------------------------------------------------------------------
 
-/** Moves the queue's serving ticket (if any) to served. Returns true if one was. */
-async function completeServing(queueId) {
-  const done = await Ticket.findOneAndUpdate(
-    { queue: queueId, status: "serving" },
-    { $set: Ticket.transition("served", { completedAt: new Date() }) }
-  );
-  if (done) await Queue.updateOne({ _id: queueId }, { $inc: { servedToday: 1 } });
-  return Boolean(done);
+/**
+ * Finishes the ticket at the counter (called or legacy serving) with
+ * `status`, in one atomic update. Serve and no-show both go through here, so
+ * when they race only one of them can match the ticket: after the first
+ * update it is no longer at the counter.
+ *
+ * With `ticketId`, only that ticket is finished (what the app sends, so an
+ * action meant for one person can't land on the next one).
+ * Returns the finished ticket or null.
+ */
+async function finishAtCounter(queueId, status, ticketId) {
+  const filter = { queue: queueId, atCounter: true };
+  if (ticketId) filter._id = ticketId;
+  const done = await Ticket.findOneAndUpdate(filter, { $set: Ticket.transition(status, { completedAt: new Date() }) }, AFTER);
+  if (done && status === "served") await Queue.updateOne({ _id: queueId }, { $inc: { servedToday: 1 } });
+  return done;
+}
+
+/** null if ticketId is absent or valid, else a 400. */
+function checkTicketId(ticketId) {
+  if (ticketId === undefined || ticketId === null) return undefined;
+  if (typeof ticketId !== "string" || !/^[0-9a-fA-F]{24}$/.test(ticketId)) {
+    throw new HttpError(400, "ticketId must be a ticket id", "VALIDATION_ERROR");
+  }
+  return ticketId;
+}
+
+/** 409 when the expected ticket was already finished, else 400 when nobody is at the counter. */
+function nothingAtCounter(ticketId, message) {
+  return ticketId
+    ? new HttpError(409, "This person was already served or marked as a no-show, please refresh", "CONFLICT")
+    : new HttpError(400, message, "NOTHING_SERVING");
 }
 
 /**
- * Calls the next person: completes whoever is at the counter, then moves the
- * lowest-numbered waiting ticket to serving. Works while paused (the waiting
- * list is kept and can be worked through), not once closed.
+ * Calls the next person: completes whoever is at the counter (served), then
+ * moves the lowest-numbered waiting ticket to "called". Works while paused
+ * (the waiting list is kept and can be worked through), not once closed.
  *
- * The unique "one serving ticket per queue" index means two call-nexts at the
- * same moment can't both pull someone up: the loser gets 409 and nobody is
- * skipped or lost.
+ * The unique "one ticket at the counter per queue" index means two call-nexts
+ * at the same moment can't both call someone: the loser gets 409 and nobody
+ * is skipped or lost.
  */
 async function callNext(queue) {
   if (queue.status === "closed") throw notAccepting("closed");
@@ -236,12 +271,12 @@ async function callNext(queue) {
   const anyoneWaiting = await Ticket.exists({ queue: queue._id, status: "waiting" });
   if (!anyoneWaiting) throw new HttpError(400, "Queue is empty", "QUEUE_EMPTY");
 
-  await completeServing(queue._id);
+  await finishAtCounter(queue._id, "served");
 
   try {
     await Ticket.findOneAndUpdate(
       { queue: queue._id, status: "waiting" },
-      { $set: Ticket.transition("serving", { startedAt: new Date() }) },
+      { $set: Ticket.transition("called", { calledAt: new Date() }) },
       { sort: { seq: 1 } }
     );
   } catch (err) {
@@ -252,10 +287,33 @@ async function callNext(queue) {
 }
 
 /** Marks the person at the counter as served. */
-async function serveCurrent(queue) {
-  const done = await completeServing(queue._id);
-  if (!done) throw new HttpError(400, "No user is currently being served", "NOTHING_SERVING");
+async function serveCurrent(queue, ticketId) {
+  const id = checkTicketId(ticketId);
+  const done = await finishAtCounter(queue._id, "served", id);
+  if (!done) throw nothingAtCounter(id, "No user is currently being served");
   return loadLive(queue._id);
+}
+
+/**
+ * Marks the person at the counter as a no-show: their ticket leaves the queue
+ * (status no_show) and the counter is free for call-next. Manual by design;
+ * the grace period only drives the "overdue" hint.
+ */
+async function markNoShow(queue, ticketId) {
+  const id = checkTicketId(ticketId);
+  const done = await finishAtCounter(queue._id, "no_show", id);
+  if (!done) throw nothingAtCounter(id, "Nobody is at the counter to mark as a no-show");
+  return { ticket: done, queue: await loadLive(queue._id) };
+}
+
+/** Per-queue settings an admin can change. Currently just the grace period. */
+async function updateSettings(queue, body) {
+  const minutes = body && body.graceMinutes;
+  if (!Number.isInteger(minutes) || minutes < 1 || minutes > 120) {
+    throw new HttpError(400, "graceMinutes must be a whole number from 1 to 120", "VALIDATION_ERROR");
+  }
+  const updated = await Queue.findByIdAndUpdate(queue._id, { $set: { graceMinutes: minutes } }, AFTER);
+  return withLiveState(updated);
 }
 
 /** Pause or resume. A closed queue can't be reopened. */
@@ -285,7 +343,7 @@ async function closeQueue(queue) {
     { queue: queue._id, status: "waiting" },
     { $set: Ticket.transition("cancelled", { completedAt: now }) }
   );
-  const servedCurrent = await completeServing(queue._id);
+  const servedCurrent = Boolean(await finishAtCounter(queue._id, "served"));
 
   return { cancelled: cancelled.modifiedCount, servedCurrent };
 }
@@ -333,6 +391,29 @@ async function usersReport(admin) {
   });
 }
 
+/**
+ * Ticket counts per status for the admin's queues (closed ones included),
+ * overall and per queue. No-shows are counted on their own, separate from
+ * served and cancelled.
+ */
+async function statsReport(admin) {
+  const queues = await Queue.find({ admin: admin._id }).select("name status").lean();
+  const rows = await Ticket.aggregate([
+    { $match: { queue: { $in: queues.map((q) => q._id) } } },
+    { $group: { _id: { queue: "$queue", status: "$status" }, n: { $sum: 1 } } },
+  ]);
+  const empty = () => ({ waiting: 0, called: 0, served: 0, cancelled: 0, noShow: 0 });
+  const key = (status) => (status === "no_show" ? "noShow" : status === "serving" ? "called" : status);
+  const totals = empty();
+  const perQueue = new Map(queues.map((q) => [String(q._id), { queueId: q._id, name: q.name, status: q.status, ...empty() }]));
+  for (const { _id, n } of rows) {
+    const k = key(_id.status);
+    totals[k] += n;
+    perQueue.get(String(_id.queue))[k] += n;
+  }
+  return { totals, queues: [...perQueue.values()] };
+}
+
 async function completedReport(admin) {
   const queueIds = await ownQueueIds(admin._id);
   return Ticket.find({ status: "served", queue: { $in: queueIds } })
@@ -350,6 +431,9 @@ module.exports = {
   userStatus,
   callNext,
   serveCurrent,
+  markNoShow,
+  updateSettings,
+  statsReport,
   setQueueStatus,
   closeQueue,
   usersReport,

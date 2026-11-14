@@ -64,12 +64,14 @@ test("--apply migrates old data so the new API works on it", async () => {
     ticketsCreatedFromOldList: 1,
     ticketsNumbered: 5,
     ticketsActiveFlagSet: 5,
+    ticketsCounterFlagSet: 5, // every existing ticket: u1 serving -> true, the rest false
     duplicateActiveCancelled: 1,
     extraServingCompleted: 0,
+    legacyIndexesDropped: 0,
   });
 
   const raw = await mongoose.connection.collection("queues").findOne({ _id: qid });
-  expect(raw).toMatchObject({ status: "open", lastSeq: 6 });
+  expect(raw).toMatchObject({ status: "open", lastSeq: 6, graceMinutes: 5 });
   expect(raw).not.toHaveProperty("users");
   expect(raw).not.toHaveProperty("nowServing");
 
@@ -91,12 +93,40 @@ test("--apply migrates old data so the new API works on it", async () => {
   expect(unique).toEqual(expect.arrayContaining(['{"queue":1,"seq":1}', '{"queue":1,"user":1}', '{"queue":1}']));
 });
 
+test("no-show update on a database already migrated for A4: flags set, old index replaced", async () => {
+  const admin = await createUser({ role: "admin" });
+  const u = await createUser();
+  await Ticket.collection.dropIndexes();
+  // The A4 index, as it exists in a database migrated before this change.
+  await Ticket.collection.createIndex({ queue: 1 }, { unique: true, name: "queue_1", partialFilterExpression: { status: "serving" } });
+  const qid = new mongoose.Types.ObjectId();
+  await mongoose.connection.collection("queues").insertOne({ _id: qid, name: "Lab", admin: admin.user._id, status: "open", lastSeq: 1, servedToday: 0 });
+  await mongoose.connection.collection("tickets").insertOne({
+    user: u.user._id, queue: qid, queueName: "Lab", seq: 1, token: "L-1", status: "serving", active: true, startedAt: at(1), createdAt: at(1),
+  });
+
+  const report = await migrate({ apply: true });
+  expect(report).toMatchObject({ ticketsCounterFlagSet: 1, legacyIndexesDropped: 1, queuesUpdated: 1, ticketsNumbered: 0 });
+
+  const names = (await Ticket.collection.indexes()).map((i) => i.name);
+  expect(names).not.toContain("queue_1");
+  expect(names).toContain("one_at_counter_per_queue");
+
+  // The old "serving" ticket is the person at the counter and can be marked a no-show.
+  const live = (await request(app).get("/api/queues").set("Authorization", admin.auth)).body[0];
+  expect(live).toMatchObject({ graceMinutes: 5, nowServing: { token: "L-1", status: "serving" } });
+  const ns = await request(app).post(`/api/queues/${qid}/no-show`).set("Authorization", admin.auth);
+  expect(ns.status).toBe(200);
+  expect((await Ticket.findOne({ user: u.user._id })).status).toBe("no_show");
+});
+
 test("running it twice changes nothing the second time", async () => {
   await seedOldFormat();
   await migrate({ apply: true });
   expect(await migrate({ apply: true })).toEqual({
     queuesUpdated: 0, ticketsCreatedFromOldList: 0, ticketsNumbered: 0,
-    ticketsActiveFlagSet: 0, duplicateActiveCancelled: 0, extraServingCompleted: 0,
+    ticketsActiveFlagSet: 0, ticketsCounterFlagSet: 0, duplicateActiveCancelled: 0,
+    extraServingCompleted: 0, legacyIndexesDropped: 0,
   });
 });
 

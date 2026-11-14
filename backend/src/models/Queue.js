@@ -26,6 +26,10 @@ const queueSchema = new mongoose.Schema(
     // ticket in a queue gets a unique token (A-1, A-2, ...).
     lastSeq: { type: Number, default: 0 },
 
+    // Minutes after being called before the person shows as overdue on the
+    // admin dashboard. Only a hint: marking a no-show stays manual.
+    graceMinutes: { type: Number, default: 5, min: 1, max: 120 },
+
     servedToday: { type: Number, default: 0 },
     avgProcessTime: { type: Number, default: 15 },
   },
