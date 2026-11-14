@@ -5,16 +5,19 @@ const { Server } = require("socket.io");
 const app = require("./app"); // Import your Express app with CORS already configured
 const connectDB = require("./config/db");
 
-console.log("🔧 Starting server initialization...");
+// Fail at startup rather than on the first login.
+for (const name of ["MONGO_URI", "JWT_SECRET"]) {
+  if (!process.env[name]) {
+    console.error(`❌ ${name} is not set (see backend/.env)`);
+    process.exit(1);
+  }
+}
 
 // Connect to DB FIRST, then start server
 async function startServer() {
   try {
-    console.log("🔗 Connecting to MongoDB...");
-    await connectDB();
-    
-    console.log("✅ MongoDB connected successfully");
-    
+    await connectDB(); // logs the database name and host
+
     // Create HTTP server
     const server = http.createServer(app);
 
@@ -60,12 +63,7 @@ async function startServer() {
     // Routes, 404 and error handling are registered in app.js.
     const PORT = process.env.PORT || 5001;
     server.listen(PORT, () => {
-      console.log(`🚀 Server running on port ${PORT}`);
-      console.log(`🌐 Test: http://localhost:${PORT}/test`);
-      console.log(`🌐 Home: http://localhost:${PORT}/`);
-      console.log(`🔐 Auth test: http://localhost:${PORT}/api/auth/test`);
-      console.log(`🌐 Network: http://10.51.4.119:${PORT}`);
-      console.log(`🌐 Expo Web: http://localhost:19006`);
+      console.log(`🚀 Server running on http://localhost:${PORT}`);
     });
     
   } catch (error) {

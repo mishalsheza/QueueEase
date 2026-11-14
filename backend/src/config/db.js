@@ -1,11 +1,15 @@
 const mongoose = require("mongoose");
 
+// One database name for the server and every script. seed_db.js and
+// check_db.js used to connect without it and silently used "test".
+const DB_NAME = "queueease";
+
 const connectDB = async () => {
   try {
     console.log("🔗 Connecting to MongoDB...");
     
     await mongoose.connect(process.env.MONGO_URI, {
-      dbName: "queueease",
+      dbName: DB_NAME,
     });
     
     console.log("✅ MongoDB connected successfully");
@@ -21,3 +25,4 @@ const connectDB = async () => {
 };
 
 module.exports = connectDB;
+module.exports.DB_NAME = DB_NAME;

@@ -14,18 +14,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Health check.
 app.get("/", (req, res) => {
   res.send("QueueEase API running");
-});
-
-// Debug route kept as-is for now; removal is a later plan item (A6).
-app.get("/cors-test", (req, res) => {
-  res.json({
-    message: "CORS test endpoint",
-    origin: req.headers.origin,
-    corsEnabled: true,
-    timestamp: new Date().toISOString(),
-  });
 });
 
 app.use("/api/auth", authRoutes);

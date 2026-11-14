@@ -1,64 +1,59 @@
+/**
+ * Resets the dev database to a small demo data set.
+ *
+ * DELETES all users, queues and tickets in the "queueease" database first, so
+ * it refuses to run without --yes:
+ *   node scripts/seed_db.js --yes
+ *
+ * Demo logins (password "password123"):
+ *   admin@example.com (admin), john@example.com (user)
+ *
+ * Tokens are no longer printed: log in through the app or POST /api/auth/login.
+ */
 const mongoose = require("mongoose");
-const jwt = require("jsonwebtoken");
 const User = require("../src/models/User");
 const Queue = require("../src/models/Queue");
-require("dotenv").config();
+const Ticket = require("../src/models/Ticket");
+const { DB_NAME } = require("../src/config/db");
 
-const seedDB = async () => {
-  try {
-    await mongoose.connect(process.env.MONGO_URI);
-    console.log("✅ Connected to DB");
+const DEMO_PASSWORD = "password123";
 
-    // Clear DB
-    await User.deleteMany({});
-    await Queue.deleteMany({});
+async function seed() {
+  await Promise.all([User.deleteMany({}), Queue.deleteMany({}), Ticket.deleteMany({})]);
 
-    // Create Admin
-    const admin = await User.create({
-      name: "Admin User",
-      email: "admin@example.com",
-      password: "password123",
-      role: "admin",
-    });
+  const admin = await User.create({ name: "Admin User", email: "admin@example.com", password: DEMO_PASSWORD, role: "admin" });
+  const user = await User.create({ name: "John Doe", email: "john@example.com", password: DEMO_PASSWORD, role: "user" });
+  const queue = await Queue.create({ name: "Dr. Smith Clinic", admin: admin._id });
 
-    // Create User
-    const user = await User.create({
-      name: "John Doe",
-      email: "john@example.com",
-      password: "password123",
-      role: "user",
-    });
+  return { admin, user, queue };
+}
 
-    // Create Queue
-    const queue = await Queue.create({
-      name: "Dr. Smith Clinic",
-      admin: admin._id,
-    });
-
-    // Generate Tokens
-    const adminToken = jwt.sign(
-      { id: admin._id, role: admin.role },
-      process.env.JWT_SECRET,
-      { expiresIn: "7d" }
-    );
-
-    const userToken = jwt.sign(
-      { id: user._id, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: "7d" }
-    );
-
-    console.log("\n--- SEED DATA ---");
-    console.log("Queue ID:", queue._id.toString());
-    console.log("\nAdmin Token:", adminToken);
-    console.log("\nUser Token:", userToken);
-    console.log("\n-----------------");
-
-    process.exit();
-  } catch (error) {
-    console.error(error);
+async function main() {
+  if (!process.argv.includes("--yes")) {
+    console.error(`This deletes all users, queues and tickets in "${DB_NAME}". Re-run with --yes to continue.`);
     process.exit(1);
   }
-};
+  require("dotenv").config({ quiet: true });
+  if (!process.env.MONGO_URI) throw new Error("MONGO_URI is not set");
 
-seedDB();
+  await mongoose.connect(process.env.MONGO_URI, { dbName: DB_NAME });
+  try {
+    const { admin, user, queue } = await seed();
+    console.log(`Seeded "${DB_NAME}":`);
+    console.log(`  admin: ${admin.email}`);
+    console.log(`  user:  ${user.email}`);
+    console.log(`  queue: ${queue.name} (${queue._id})`);
+    console.log(`  password for both: ${DEMO_PASSWORD}`);
+  } finally {
+    await mongoose.disconnect();
+  }
+}
+
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(`Error: ${err.message}`);
+    process.exit(1);
+  });
+}
+
+module.exports = { seed, DEMO_PASSWORD };

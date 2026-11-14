@@ -12,6 +12,7 @@
  */
 const mongoose = require("mongoose");
 const User = require("../src/models/User");
+const { DB_NAME } = require("../src/config/db");
 
 async function createAdmin({ name, email, password }) {
   if (!email) throw new Error("--email is required");
@@ -49,7 +50,7 @@ async function main() {
   const { name, email } = parseArgs(process.argv.slice(2));
   if (!process.env.MONGO_URI) throw new Error("MONGO_URI is not set");
 
-  await mongoose.connect(process.env.MONGO_URI, { dbName: "queueease" });
+  await mongoose.connect(process.env.MONGO_URI, { dbName: DB_NAME });
   try {
     const { action, user } = await createAdmin({ name, email, password: process.env.ADMIN_PASSWORD });
     console.log(`Admin ${action}: ${user.email} (${user._id})`);

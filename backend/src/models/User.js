@@ -31,12 +31,13 @@ const UserSchema = new mongoose.Schema({
   },
 });
 
-// Encrypt password using bcrypt
-UserSchema.pre("save", async function (next) {
-  if (!this.isModified("password")) {
-    next();
-  }
-
+// Hash the password when it is new or changed. Mongoose 9 no longer passes
+// `next` to async hooks: returning (or throwing) is how the hook finishes.
+// The old version called next() and then fell through, so it would have
+// re-hashed the hash; on Mongoose 9 the next() call threw instead, so any
+// save() that didn't change the password failed.
+UserSchema.pre("save", async function () {
+  if (!this.isModified("password")) return;
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);
 });
