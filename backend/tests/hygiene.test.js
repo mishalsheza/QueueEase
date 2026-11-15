@@ -55,7 +55,7 @@ describe("auth routes don't log secrets", () => {
       const res = await request(app)
         .post("/api/auth/login")
         .send({ email: creds.email, password: "Wrong-Guess-123" });
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(401);
     });
     expect(logs).not.toContain("Wrong-Guess-123");
   });

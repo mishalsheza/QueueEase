@@ -47,12 +47,12 @@ describe("auth", () => {
     expect(res.status).toBe(400);
   });
 
-  test("login with wrong password -> 400", async () => {
+  test("login with wrong password -> 401", async () => {
     await request(app)
       .post("/api/auth/register")
       .send({ name: "Ann", email: "ann@test.com", password: "secret123" });
     const res = await request(app).post("/api/auth/login").send({ email: "ann@test.com", password: "nope" });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(401);
   });
 });
 

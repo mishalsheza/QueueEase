@@ -7,14 +7,17 @@ const asyncHandler = require("../utils/asyncHandler");
 const { requireRole } = require("../middleware/requireRole");
 const { requireQueueOwner } = require("../middleware/requireQueueOwner");
 const svc = require("../services/queueService");
+const { validate } = require("../middleware/validate");
+const { schemas, OBJECT_ID } = require("../validation/schemas");
 const { publishQueue, notifyCalled } = require("../realtime/socket");
 
 // Queue logic lives in services/queueService.js; routes handle HTTP only.
 
 // Reject malformed ids up front with the same 400 as before, whichever query
 // would have hit them first.
+// Applies to every route with :queueId.
 router.param("queueId", (req, res, next, id) => {
-  if (/^[0-9a-fA-F]{24}$/.test(id)) return next();
+  if (OBJECT_ID.test(id)) return next();
   return res.status(400).json({ message: "Invalid _id", code: "INVALID_ID" });
 });
 
@@ -22,13 +25,14 @@ router.param("queueId", (req, res, next, id) => {
 const publish = (req, queue, reason) => publishQueue(req.app.get("io"), queue, reason);
 
 /** Admin creates a queue. */
-router.post("/", protect, requireRole("admin"), asyncHandler(async (req, res) => {
+router.post("/", protect, requireRole("admin"), validate(schemas.createQueue), asyncHandler(async (req, res) => {
+  const { name, type, section, graceMinutes } = req.body; // validated
   const queue = await Queue.create({
-    name: req.body.name,
+    name,
     admin: req.user._id,
-    type: req.body.type || "General Checkup",
-    section: req.body.section || "A",
-    ...(req.body.graceMinutes !== undefined && { graceMinutes: req.body.graceMinutes }),
+    type: type || "General Checkup",
+    section: section || "A",
+    ...(graceMinutes !== undefined && { graceMinutes }),
   });
   const live = await svc.withLiveState(queue);
   publish(req, live, "created");
@@ -86,8 +90,8 @@ router.post("/:queueId/call-next", protect, requireRole("admin"), requireQueueOw
  * Admin marks the person at the counter as served. Optional body
  * { ticketId }: 409 if that ticket is no longer at the counter.
  */
-router.post("/:queueId/serve", protect, requireRole("admin"), requireQueueOwner, asyncHandler(async (req, res) => {
-  const queue = await svc.serveCurrent(req.queue, req.body && req.body.ticketId);
+router.post("/:queueId/serve", protect, requireRole("admin"), validate(schemas.atCounter), requireQueueOwner, asyncHandler(async (req, res) => {
+  const queue = await svc.serveCurrent(req.queue, req.body.ticketId);
   publish(req, queue, "served");
   res.json({ message: "User served", queue });
 }));
@@ -96,22 +100,22 @@ router.post("/:queueId/serve", protect, requireRole("admin"), requireQueueOwner,
  * Admin marks the person at the counter as a no-show. Optional body
  * { ticketId }. Atomic with serve: if both happen at once, one gets 409.
  */
-router.post("/:queueId/no-show", protect, requireRole("admin"), requireQueueOwner, asyncHandler(async (req, res) => {
-  const { ticket, queue } = await svc.markNoShow(req.queue, req.body && req.body.ticketId);
+router.post("/:queueId/no-show", protect, requireRole("admin"), validate(schemas.atCounter), requireQueueOwner, asyncHandler(async (req, res) => {
+  const { ticket, queue } = await svc.markNoShow(req.queue, req.body.ticketId);
   publish(req, queue, "no_show");
   res.json({ message: "Marked as no-show", token: ticket.token, queue });
 }));
 
 /** Admin changes queue settings: body { graceMinutes } (1-120). */
-router.patch("/:queueId/settings", protect, requireRole("admin"), requireQueueOwner, asyncHandler(async (req, res) => {
+router.patch("/:queueId/settings", protect, requireRole("admin"), validate(schemas.settings), requireQueueOwner, asyncHandler(async (req, res) => {
   const queue = await svc.updateSettings(req.queue, req.body);
   publish(req, queue, "settings");
   res.json({ message: "Settings saved", queue });
 }));
 
 /** Admin pauses or resumes a queue: body { status: "paused" | "open" }. */
-router.patch("/:queueId/status", protect, requireRole("admin"), requireQueueOwner, asyncHandler(async (req, res) => {
-  const queue = await svc.setQueueStatus(req.queue, req.body && req.body.status);
+router.patch("/:queueId/status", protect, requireRole("admin"), validate(schemas.setStatus), requireQueueOwner, asyncHandler(async (req, res) => {
+  const queue = await svc.setQueueStatus(req.queue, req.body.status);
   publish(req, queue, queue.status === "paused" ? "paused" : "resumed");
   res.json({ message: queue.status === "paused" ? "Queue paused" : "Queue resumed", queue });
 }));

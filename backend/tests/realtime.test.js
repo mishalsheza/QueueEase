@@ -45,7 +45,12 @@ function open(token) {
     s.on("connect_error", (err) => resolve({ s, ok: false, error: err.message }));
   });
 }
-const connected = async (actor) => (await open(actor.token)).s;
+/** Connects and fails the test with the server's reason if refused. */
+const connected = async (actor) => {
+  const r = await open(actor.token);
+  if (!r.ok) throw new Error(`socket refused: ${r.error}`);
+  return r.s;
+};
 const subscribe = (s, queueId) => s.timeout(2000).emitWithAck("queue:subscribe", queueId);
 /** Waits a moment for in-flight events, then returns what arrived. */
 const settle = () => new Promise((r) => setTimeout(r, 150));

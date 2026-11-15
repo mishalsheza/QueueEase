@@ -1,120 +1,69 @@
 const express = require("express");
 const router = express.Router();
-const User = require("../models/User");
+const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const User = require("../models/User");
 const { protect } = require("../middleware/auth");
+const { validate } = require("../middleware/validate");
+const { schemas } = require("../validation/schemas");
+const asyncHandler = require("../utils/asyncHandler");
+
+const signToken = (user) => jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
+const publicUser = (user) => ({ id: user._id, name: user.name, email: user.email, role: user.role });
+
+// Compared against when the email doesn't exist, so a failed login takes the
+// same time (one bcrypt compare at the same cost) whether or not the account
+// exists. Without it, response time alone would reveal registered emails.
+const DUMMY_HASH = bcrypt.hashSync("not-a-real-password", 10);
+
+const INVALID_CREDENTIALS = { message: "Invalid email or password", code: "INVALID_CREDENTIALS" };
 
 /**
- * Rejects the request with 400 unless every listed field that is present is a
- * string. Stops NoSQL operator injection such as {"email": {"$gt": ""}}, which
- * would otherwise be passed into User.findOne as a query operator.
- * Presence is still checked by each route. Full validation is plan item B1.
+ * Register. Always creates a regular user: `role` (and any other unknown
+ * field) is dropped by validation. Admins are created only via
+ * scripts/create_admin.js or the seed script.
+ *
+ * Note: "already exists" does reveal that an email is registered. That is
+ * inherent to an instant signup; hiding it needs an email-verification flow.
  */
-const requireStringFields = (...fields) => (req, res, next) => {
-  const body = req.body || {};
-  const invalid = fields.filter((f) => body[f] !== undefined && typeof body[f] !== "string");
-  if (invalid.length > 0) {
-    return res.status(400).json({
-      message: `${invalid.join(", ")} must be a string`,
-      code: "VALIDATION_ERROR",
-      errors: invalid.map((field) => ({ field, message: "must be a string" })),
-    });
-  }
-  return next();
-};
+router.post("/register", validate(schemas.register), asyncHandler(async (req, res) => {
+  const { name, email, password } = req.body;
 
-// Register route. Always creates a regular user; admins are created only via
-// scripts/create_admin.js (or the seed script), never from a public endpoint.
-// Nothing here logs the request body, headers, password or token.
-router.post("/register", requireStringFields("name", "email", "password"), async (req, res, next) => {
+  if (await User.exists({ email })) {
+    return res.status(400).json({ message: "User with this email already exists", code: "DUPLICATE_EMAIL" });
+  }
+
+  let user;
   try {
-    // `role` from the body is deliberately ignored: self-registration as admin
-    // was possible before.
-    const { name, email, password } = req.body;
-    const role = "user";
-
-    if (!name || !email || !password) {
-      return res.status(400).json({
-        message: "Missing required fields",
-        details: { name: !!name, email: !!email, password: !!password, receivedRole: role },
-      });
+    user = await User.create({ name, email, password, role: "user" });
+  } catch (err) {
+    // Two registrations racing past the check above.
+    if (err && err.code === 11000) {
+      return res.status(400).json({ message: "User with this email already exists", code: "DUPLICATE_EMAIL" });
     }
-
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return res.status(400).json({ message: "User with this email already exists", email });
-    }
-
-    const user = new User({ name, email, password, role });
-    const validationError = user.validateSync();
-    if (validationError) {
-      return res.status(400).json({
-        message: "Validation failed",
-        errors: Object.keys(validationError.errors).map((key) => ({
-          field: key,
-          message: validationError.errors[key].message,
-        })),
-      });
-    }
-
-    await user.save();
-
-    const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
-
-    res.status(201).json({
-      message: `${user.role} registered successfully`,
-      token,
-      user: { id: user._id, name: user.name, email: user.email, role: user.role },
-    });
-  } catch (error) {
-    // Two registrations racing past the findOne above.
-    if (error.name === "MongoServerError" && error.code === 11000) {
-      return res.status(400).json({ message: "Email already exists", error: "DUPLICATE_EMAIL" });
-    }
-    if (error.name === "ValidationError") {
-      return res.status(400).json({
-        message: "Validation failed",
-        errors: Object.keys(error.errors).map((key) => ({ field: key, message: error.errors[key].message })),
-      });
-    }
-    return next(error);
+    throw err; // Mongoose ValidationError -> 400 via errorHandler
   }
-});
 
-// Login route
-router.post("/login", requireStringFields("email", "password"), async (req, res, next) => {
-  try {
-    const { email, password } = req.body;
+  res.status(201).json({ message: "user registered successfully", token: signToken(user), user: publicUser(user) });
+}));
 
-    if (!email || !password) {
-      return res.status(400).json({
-        message: "Please provide email and password",
-        received: { email: !!email, password: !!password },
-      });
-    }
+/**
+ * Login. Unknown email and wrong password get the same 401 and message, and
+ * take the same time, so the endpoint can't be used to find out which emails
+ * have accounts.
+ */
+router.post("/login", validate(schemas.login), asyncHandler(async (req, res) => {
+  const { email, password } = req.body;
 
-    // NOTE: these two messages reveal whether the email exists; plan item B2.
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(400).json({ message: "Invalid credentials - user not found", email });
-    }
+  const user = await User.findOne({ email });
+  const passwordOk = user
+    ? await user.matchPassword(password)
+    : (await bcrypt.compare(password, DUMMY_HASH)) && false;
 
-    const isMatch = await user.matchPassword(password);
-    if (!isMatch) {
-      return res.status(400).json({ message: "Invalid credentials - wrong password" });
-    }
+  if (!user || !passwordOk) return res.status(401).json(INVALID_CREDENTIALS);
 
-    const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
-
-    res.status(200).json({
-      message: "Login successful",
-      token,
-      user: { id: user._id, name: user.name, email: user.email, role: user.role },
-    });
-  } catch (error) {
-    return next(error);
-  }
-});
+  res.status(200).json({ message: "Login successful", token: signToken(user), user: publicUser(user) });
+}));
 
 router.get("/me", protect, (req, res) => {
   res.json({ user: req.user });

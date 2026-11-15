@@ -240,15 +240,6 @@ async function finishAtCounter(queueId, status, ticketId) {
   return done;
 }
 
-/** null if ticketId is absent or valid, else a 400. */
-function checkTicketId(ticketId) {
-  if (ticketId === undefined || ticketId === null) return undefined;
-  if (typeof ticketId !== "string" || !/^[0-9a-fA-F]{24}$/.test(ticketId)) {
-    throw new HttpError(400, "ticketId must be a ticket id", "VALIDATION_ERROR");
-  }
-  return ticketId;
-}
-
 /** 409 when the expected ticket was already finished, else 400 when nobody is at the counter. */
 function nothingAtCounter(ticketId, message) {
   return ticketId
@@ -291,7 +282,7 @@ async function callNext(queue) {
 
 /** Marks the person at the counter as served. */
 async function serveCurrent(queue, ticketId) {
-  const id = checkTicketId(ticketId);
+  const id = ticketId; // validated by the route schema
   const done = await finishAtCounter(queue._id, "served", id);
   if (!done) throw nothingAtCounter(id, "No user is currently being served");
   return loadLive(queue._id);
@@ -303,7 +294,7 @@ async function serveCurrent(queue, ticketId) {
  * the grace period only drives the "overdue" hint.
  */
 async function markNoShow(queue, ticketId) {
-  const id = checkTicketId(ticketId);
+  const id = ticketId; // validated by the route schema
   const done = await finishAtCounter(queue._id, "no_show", id);
   if (!done) throw nothingAtCounter(id, "Nobody is at the counter to mark as a no-show");
   return { ticket: done, queue: await loadLive(queue._id) };
@@ -311,19 +302,13 @@ async function markNoShow(queue, ticketId) {
 
 /** Per-queue settings an admin can change. Currently just the grace period. */
 async function updateSettings(queue, body) {
-  const minutes = body && body.graceMinutes;
-  if (!Number.isInteger(minutes) || minutes < 1 || minutes > 120) {
-    throw new HttpError(400, "graceMinutes must be a whole number from 1 to 120", "VALIDATION_ERROR");
-  }
+  const minutes = body.graceMinutes; // validated by the route schema: whole number 1-120
   const updated = await Queue.findByIdAndUpdate(queue._id, { $set: { graceMinutes: minutes } }, AFTER);
   return withLiveState(updated);
 }
 
-/** Pause or resume. A closed queue can't be reopened. */
+/** Pause or resume (status is "open" or "paused", validated by the route). A closed queue can't be reopened. */
 async function setQueueStatus(queue, status) {
-  if (status !== "open" && status !== "paused") {
-    throw new HttpError(400, 'status must be "open" or "paused" (use close to close a queue)', "VALIDATION_ERROR");
-  }
   const updated = await Queue.findOneAndUpdate(
     { _id: queue._id, status: { $ne: "closed" } },
     { $set: { status } },
