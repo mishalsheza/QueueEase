@@ -615,6 +615,8 @@ sequenceDiagram
 - The token is checked when a socket connects. A socket that is already
   connected stays connected if its token expires or the account is deleted,
   until it disconnects. REST calls are still checked on every request.
-- Socket.io CORS origins are still a hard-coded list in `server.js`.
+- Allowed browser origins come from `CORS_ORIGINS` and apply to REST and to
+  socket handshakes. The handshake check matters because browsers don't apply
+  CORS to WebSockets.
 - `ticket:called` only reaches an open app. A closed app needs push
   notifications.

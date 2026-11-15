@@ -1,17 +1,19 @@
 // server.js
 require("dotenv").config();
+const { loadConfig } = require("./config/env");
+
+// Fail at startup, listing every problem, rather than on the first request.
+const { config, errors } = loadConfig();
+if (errors.length > 0) {
+  console.error("❌ Invalid configuration (see backend/.env):");
+  errors.forEach((e) => console.error(`   - ${e}`));
+  process.exit(1);
+}
+
 const http = require("http");
 const { attachSocket } = require("./realtime/socket");
-const app = require("./app"); // Import your Express app with CORS already configured
+const app = require("./app");
 const connectDB = require("./config/db");
-
-// Fail at startup rather than on the first login.
-for (const name of ["MONGO_URI", "JWT_SECRET"]) {
-  if (!process.env[name]) {
-    console.error(`❌ ${name} is not set (see backend/.env)`);
-    process.exit(1);
-  }
-}
 
 // Connect to DB FIRST, then start server
 async function startServer() {
@@ -22,20 +24,12 @@ async function startServer() {
     const server = http.createServer(app);
 
     // Socket.io: authenticated, rooms by entitlement (see realtime/socket.js).
-    const io = attachSocket(server, {
-      corsOrigins: [
-        "http://localhost:19006", // Expo web (legacy port)
-        "http://localhost:19000", // Expo dev tools
-        "http://localhost:8081", // Expo web / Metro
-        "http://10.51.4.119:19006", // LAN IP for devices
-        "exp://10.51.4.119:19000", // Expo dev client
-        "http://10.0.2.2:5001", // Android emulator alias for localhost
-      ],
-    });
+    // Same allowlist as REST (CORS_ORIGINS).
+    const io = attachSocket(server, { corsOrigins: config.corsOrigins });
     app.set("io", io); // routes publish updates through it
 
     // Routes, 404 and error handling are registered in app.js.
-    const PORT = process.env.PORT || 5001;
+    const PORT = config.port;
     server.listen(PORT, () => {
       console.log(`🚀 Server running on http://localhost:${PORT}`);
     });

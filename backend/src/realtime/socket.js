@@ -3,6 +3,8 @@
  * small event payloads.
  *
  * Connecting
+ *   Browser origins must be in CORS_ORIGINS (checked on the handshake, since
+ *   browsers don't apply CORS to WebSockets).
  *   The client passes its JWT in the handshake: io(url, { auth: { token } }).
  *   No valid token (or a deleted account) -> the connection is refused with
  *   connect_error "UNAUTHORIZED". The token is not read from the URL, so it
@@ -58,8 +60,17 @@ async function subscribeRefusal(user, queueId) {
 }
 
 function attachSocket(httpServer, { corsOrigins = [] } = {}) {
+  const allowed = new Set(corsOrigins);
   const io = new Server(httpServer, {
+    // Polling requests are covered by CORS...
     cors: { origin: corsOrigins, methods: ["GET", "POST"], credentials: true },
+    // ...but browsers don't apply CORS to WebSocket connections, so the Origin
+    // is checked on every handshake too. No Origin (the native app, Node
+    // clients) is allowed; the JWT check below still applies to everyone.
+    allowRequest: (req, cb) => {
+      const origin = req.headers.origin;
+      cb(null, !origin || allowed.has(origin));
+    },
   });
 
   io.use(async (socket, next) => {
