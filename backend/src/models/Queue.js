@@ -42,5 +42,10 @@ const queueSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// B3: an admin's queues (dashboard list, reports) and the open queues users
+// can join. Closed queues are kept for history, so this collection only grows.
+queueSchema.index({ admin: 1, status: 1 });
+queueSchema.index({ status: 1 });
+
 module.exports = mongoose.model("Queue", queueSchema);
 module.exports.QUEUE_STATUSES = QUEUE_STATUSES;

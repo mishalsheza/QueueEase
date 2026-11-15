@@ -39,8 +39,10 @@ const notAccepting = (status) =>
 async function withLiveState(queues) {
   const list = Array.isArray(queues) ? queues : [queues];
   const ids = list.map((q) => q._id);
+  // seq is unique per queue, so it alone orders each waiting list; sorting on
+  // the indexed field lets the active_by_queue index return it pre-sorted.
   const active = await Ticket.find({ queue: { $in: ids }, active: true })
-    .sort({ seq: 1, createdAt: 1 })
+    .sort({ seq: 1 })
     .select("queue user token status atCounter joinedAt calledAt startedAt")
     .lean();
 
@@ -154,7 +156,8 @@ async function leaveQueue(queueId, user) {
   const queue = await Queue.findById(queueId);
   if (!queue) throw NOT_FOUND();
   await Ticket.findOneAndUpdate(
-    { queue: queue._id, user: user._id, status: "waiting" },
+    // active: true is implied by waiting; stating it lets the (queue, user) index answer in one key.
+    { queue: queue._id, user: user._id, status: "waiting", active: true },
     { $set: Ticket.transition("cancelled", { completedAt: new Date() }) }
   );
   return withLiveState(queue);
@@ -164,7 +167,7 @@ async function leaveQueue(queueId, user) {
 async function userPosition(queueId, user) {
   const queue = await Queue.findById(queueId);
   if (!queue) throw NOT_FOUND();
-  const ticket = await Ticket.findOne({ queue: queue._id, user: user._id, status: "waiting" });
+  const ticket = await Ticket.findOne({ queue: queue._id, user: user._id, status: "waiting", active: true });
   if (!ticket) throw new HttpError(400, "User not in queue", "NOT_IN_QUEUE");
   const totalUsers = await Ticket.countDocuments({ queue: queue._id, status: "waiting" });
   return { queueName: queue.name, position: await positionOf(ticket), totalUsers };

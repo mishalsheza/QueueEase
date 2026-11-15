@@ -8,7 +8,9 @@
     "test": "jest --runInBand",
     "test:coverage": "jest --runInBand --coverage",
     "bench:concurrency": "node bench/concurrency.js",
-    "migrate:queues": "node scripts/migrate_queue_model.js"
+    "migrate:queues": "node scripts/migrate_queue_model.js",
+    "bench:explain": "node bench/explain.js",
+    "sync:indexes": "node scripts/sync_indexes.js"
   },
   "keywords": [],
   "author": "",

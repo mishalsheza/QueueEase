@@ -54,9 +54,24 @@ ticketSchema.index(
   { queue: 1 },
   { unique: true, name: "one_at_counter_per_queue", partialFilterExpression: { atCounter: true } }
 );
-// Waiting list reads (ordered by seq) and per-user lookups.
+// Read indexes (B3). Each one's key order is filter fields first, then the
+// sort field, so results come out of the index already sorted. Measured with
+// bench/explain.js; see docs/architecture.md section 5.
+//
+// Waiting list per queue in ticket order: position, call next, waiting count, close.
 ticketSchema.index({ queue: 1, status: 1, seq: 1 });
-ticketSchema.index({ user: 1, status: 1 });
+// Active tickets of a set of queues, in ticket order: live state on every dashboard refresh.
+ticketSchema.index({ queue: 1, seq: 1 }, { name: "active_by_queue", partialFilterExpression: { active: true } });
+// Admin users report, newest first.
+ticketSchema.index({ queue: 1, createdAt: -1 });
+// Admin completed report: served tickets, most recently completed first.
+ticketSchema.index({ queue: 1, status: 1, completedAt: -1 });
+// A user's active tickets, oldest first (my-status).
+ticketSchema.index({ user: 1, createdAt: 1 }, { name: "active_by_user", partialFilterExpression: { active: true } });
+// A user's history, newest first (my-history).
+ticketSchema.index({ user: 1, createdAt: -1 });
+// A user's recently finished tickets (my-status "completed in the last 10 minutes").
+ticketSchema.index({ user: 1, completedAt: -1 });
 
 /** Fields to $set when moving a ticket to `status`, keeping the flags in sync. */
 ticketSchema.statics.transition = (status, extra = {}) => ({

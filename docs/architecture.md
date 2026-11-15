@@ -4,7 +4,7 @@ QueueEase is a queue management app: an Expo (React Native) client talks to a
 Node/Express API over REST, receives live updates over Socket.io, and stores
 data in MongoDB.
 
-This document has four parts:
+This document has five parts:
 
 1. **Before the role-based workflow change**: how the app behaved when it was
    audited, including the problems found. Kept for reference.
@@ -13,6 +13,7 @@ This document has four parts:
    queue status (open / paused / closed), and before/after concurrency numbers.
 4. **Live updates (current)**: authenticated sockets, rooms, small update
    messages and the "you're being called" notification.
+5. **Indexes (current)**: query plans for the main queries, before and after.
 
 ---
 
@@ -620,3 +621,120 @@ sequenceDiagram
   CORS to WebSockets.
 - `ticket:called` only reaches an open app. A closed app needs push
   notifications.
+
+---
+
+## 5. Indexes (current)
+
+### 5.1 How this was measured
+
+[`backend/bench/explain.js`](../backend/bench/explain.js)
+(`npm run bench:explain -- --md`) seeds a throwaway in-memory MongoDB with
+100000 tickets, 200 queues and 5020 users
+(20 admins × 10 queues × 500 tickets, 20 waiting per open queue, one queue
+per admin closed). It then runs `explain("executionStats")` on each main
+query, written exactly as the code issues it, for one admin, one queue and
+one user. [`tests/indexes.test.js`](../backend/tests/indexes.test.js) runs the same queries on every
+test run and fails on any COLLSCAN, in-memory sort or wasteful read.
+
+"Sort: in memory" means MongoDB had to collect every match and sort it before
+returning anything (a blocking SORT stage). Keys and docs examined vs returned
+show how much work each query did.
+
+### 5.2 Before
+
+| Query | Code | Plan | Index | Sort | Returned | Keys examined | Docs examined |
+|---|---|---|---|---|---|---|---|
+| Queue list (admin) | `listQueues` | COLLSCAN | - | - | 9 | 0 | 200 |
+| Queue list (user) | `listQueues` | COLLSCAN | - | - | 180 | 0 | 200 |
+| Admin's queue ids (reports) | `ownQueueIds / statsReport` | COLLSCAN | - | - | 10 | 0 | 200 |
+| Already joined? | `joinQueue` | IXSCAN | `queue_1_user_1` | - | 1 | 1 | 1 |
+| Live state of admin's queues | `withLiveState` | IXSCAN | `queue_1_user_1` | in memory | 189 | 190 | 189 |
+| Position (people ahead) | `positionOf` | IXSCAN | `queue_1_status_1_seq_1` | - | 19 | 19 | 19 |
+| User's waiting ticket | `leaveQueue / userPosition` | IXSCAN | `user_1_status_1` | - | 1 | 1 | 1 |
+| My active tickets | `userStatus` | IXSCAN | `user_1_status_1` | in memory | 1 | 22 | 22 |
+| My recently finished | `userStatus` | IXSCAN | `user_1_status_1` | in memory | 0 | 22 | 21 |
+| My history | `GET /my-history` | IXSCAN | `user_1_status_1` | in memory | 21 | 22 | 21 |
+| Ticket at the counter | `finishAtCounter` | IXSCAN | `one_at_counter_per_queue` | - | 1 | 1 | 1 |
+| Next to call | `callNext` | IXSCAN | `queue_1_status_1_seq_1` | - | 1 | 1 | 1 |
+| Users report | `usersReport` | IXSCAN | `queue_1_status_1_seq_1` | in memory | 5000 | 5001 | 5000 |
+| Completed report (top 20) | `completedReport` | IXSCAN | `queue_1_status_1_seq_1` | in memory | 20 | 2902 | 2883 |
+| Stats per status | `statsReport` | IXSCAN | `queue_1_status_1_seq_1` | - | 48 | 5000 | 0 |
+| Login lookup | `POST /login` | IXSCAN | `email_1` | - | 1 | 1 | 1 |
+
+- 3 COLLSCANs, all on `queues`: it had no index besides `_id`. Since closed
+  queues are kept for history (section 3), this collection only grows.
+- Ticket queries already used the indexes added for correctness in A4, but 6
+  sorted in memory. The completed report examined 2,883 documents to
+  return 20, and "my active tickets" examined a user's whole history to find
+  one.
+
+### 5.3 After
+
+| Query | Code | Plan | Index | Sort | Returned | Keys examined | Docs examined |
+|---|---|---|---|---|---|---|---|
+| Queue list (admin) | `listQueues` | IXSCAN | `admin_1_status_1` | - | 9 | 11 | 9 |
+| Queue list (user) | `listQueues` | IXSCAN | `status_1` | - | 180 | 181 | 180 |
+| Admin's queue ids (reports) | `ownQueueIds / statsReport` | IXSCAN | `admin_1_status_1` | - | 10 | 10 | 10 |
+| Already joined? | `joinQueue` | IXSCAN | `queue_1_user_1` | - | 1 | 1 | 1 |
+| Live state of admin's queues | `withLiveState` | IXSCAN | `active_by_queue` | - | 189 | 189 | 189 |
+| Position (people ahead) | `positionOf` | IXSCAN | `queue_1_status_1_seq_1` | - | 19 | 19 | 19 |
+| User's waiting ticket | `leaveQueue / userPosition` | IXSCAN | `queue_1_user_1` | - | 1 | 1 | 1 |
+| My active tickets | `userStatus` | IXSCAN | `active_by_user` | - | 1 | 1 | 1 |
+| My recently finished | `userStatus` | IXSCAN | `user_1_completedAt_-1` | - | 0 | 0 | 0 |
+| My history | `GET /my-history` | IXSCAN | `user_1_createdAt_-1` | - | 21 | 22 | 22 |
+| Ticket at the counter | `finishAtCounter` | IXSCAN | `one_at_counter_per_queue` | - | 1 | 1 | 1 |
+| Next to call | `callNext` | IXSCAN | `queue_1_status_1_seq_1` | - | 1 | 1 | 1 |
+| Users report | `usersReport` | IXSCAN | `queue_1_createdAt_-1` | - | 5000 | 5000 | 5000 |
+| Completed report (top 20) | `completedReport` | IXSCAN | `queue_1_status_1_completedAt_-1` | - | 20 | 29 | 20 |
+| Stats per status | `statsReport` | IXSCAN | `queue_1_status_1_seq_1` | - | 48 | 5000 | 0 |
+| Login lookup | `POST /login` | IXSCAN | `email_1` | - | 1 | 1 | 1 |
+
+- **0 COLLSCANs, 0 in-memory sorts.** Every selective query examines about as
+  many documents as it returns. The stats query is answered from index keys
+  alone (0 documents).
+- Completed report: 2,883 → 20 documents examined. My active tickets: 22 → 1.
+  User's waiting ticket: from the user's history (via `user_1_status_1`) to a
+  single key.
+
+### 5.4 Indexes added
+
+| Collection | Index | Serves |
+|---|---|---|
+| queues | `{ admin: 1, status: 1 }` | admin's queue list, report queue ids |
+| queues | `{ status: 1 }` | the open queues users can join |
+| tickets | `{ queue: 1, seq: 1 }` partial `active: true` (`active_by_queue`) | live state of a dashboard's queues, in ticket order |
+| tickets | `{ queue: 1, createdAt: -1 }` | users report, newest first |
+| tickets | `{ queue: 1, status: 1, completedAt: -1 }` | completed report (top 20 most recent) |
+| tickets | `{ user: 1, createdAt: 1 }` partial `active: true` (`active_by_user`) | my active tickets |
+| tickets | `{ user: 1, createdAt: -1 }` | my history |
+| tickets | `{ user: 1, completedAt: -1 }` | my recently finished tickets |
+
+`{ user: 1, status: 1 }` was removed: the user indexes above cover its
+queries better. Kept from A4: `{ queue: 1, status: 1, seq: 1 }` (waiting
+list, position, call next) and the three unique indexes that enforce
+correctness (section 3.2).
+
+Two queries were adjusted so an index can answer them. The live-state sort
+is now `seq` only (it is unique per queue, so the old `createdAt` tie-breaker
+never applied). The waiting-ticket lookups add `active: true` (implied by
+`status: "waiting"`), which lets the partial `(queue, user)` index answer.
+
+**Cost:** tickets now have 11 indexes, so each ticket write updates more of
+them; the two partial ones only hold active tickets. In this app, reads
+dominate: every live update makes each open dashboard re-read its queues.
+
+### 5.5 Applying to an existing database
+
+Mongoose creates missing indexes when the server starts, but never drops
+any. To also drop `user_1_status_1`:
+
+```
+cd backend
+npm run sync:indexes              # dry run: lists creates and drops
+npm run sync:indexes -- --apply
+```
+
+The dry run lists every index no model declares, including any created by
+hand, so check it before applying. Documents are never touched.
+
