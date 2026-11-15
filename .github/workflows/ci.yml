@@ -36,6 +36,25 @@ jobs:
       # The tests use an in-memory MongoDB and tests/setupEnv.js; no secrets or backend/.env needed.
       - run: npm test
 
+  docker:
+    name: Docker compose smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      # --wait returns once both containers pass their health checks
+      # (the API's needs MongoDB connected), and fails if they don't.
+      - name: Start the API and MongoDB
+        run: docker compose up -d --build --wait --wait-timeout 180
+      - name: Health check from the host
+        run: curl -fsS http://localhost:5001/api/health
+      - name: Show logs
+        if: failure()
+        run: docker compose logs
+      - name: Stop and remove
+        if: always()
+        run: docker compose down -v
+
   mobile:
     name: Mobile type-check, lint and tests
     runs-on: ubuntu-latest

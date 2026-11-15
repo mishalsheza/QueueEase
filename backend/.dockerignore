@@ -1,0 +1,10 @@
+# Only package*.json, src/, scripts/ and docker-entrypoint.sh are needed.
+# .env must never end up in the image: settings come from docker-compose.yml.
+.env
+.env.*
+node_modules
+tests
+coverage
+bench
+*.log
+.DS_Store

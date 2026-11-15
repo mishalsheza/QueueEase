@@ -1,10 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import { 
   View, 
   Text, 
   StyleSheet, 
   ScrollView, 
-  TouchableOpacity, 
   RefreshControl,
   StatusBar,
 } from 'react-native';
@@ -31,7 +30,6 @@ const ProfileScreen = () => {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [history, setHistory] = useState<TicketHistory[]>([]);
   const [refreshing, setRefreshing] = useState(false);
-  const [loading, setLoading] = useState(true);
 
   const fetchData = async () => {
     try {
@@ -44,7 +42,6 @@ const ProfileScreen = () => {
     } catch (err) {
       console.error('Error fetching profile data:', err);
     } finally {
-      setLoading(false);
       setRefreshing(false);
     }
   };

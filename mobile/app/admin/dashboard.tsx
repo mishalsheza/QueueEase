@@ -66,21 +66,9 @@ const minutesAgo = (iso: string | undefined, now: number) => {
   return { mins, label: mins === 0 ? 'just now' : `${mins} min ago` };
 };
 
-// User in queue type
-type UserInQueue = {
-  id: string;
-  name: string;
-  token: string;
-  queueId: string;
-  joinedAt: Date;
-  status: 'waiting' | 'served' | 'cancelled';
-  position: number;
-};
-
 export default function AdminDashboard() {
   const { user, signOut } = useAuth();
   const [queues, setQueues] = useState<QueueType[]>([]);
-  const [users, setUsers] = useState<UserInQueue[]>([]);
   const [completedTickets, setCompletedTickets] = useState<any[]>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newQueue, setNewQueue] = useState({

@@ -4,7 +4,6 @@ import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   TouchableOpacity,
   StatusBar,
   FlatList,
@@ -30,11 +29,9 @@ type UserInQueue = {
 
 export default function UsersScreen() {
   const [users, setUsers] = useState<UserInQueue[]>([]);
-  const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState<'all' | 'waiting' | 'serving' | 'served' | 'cancelled'>('all');
 
   const fetchUsers = async () => {
-    setLoading(true);
     try {
       const res = await api.get('/queues/admin/users-report');
       // Format the date using native methods
@@ -45,8 +42,6 @@ export default function UsersScreen() {
       setUsers(formattedData);
     } catch (err) {
       console.error('Error fetching users:', err);
-    } finally {
-      setLoading(false);
     }
   };
 

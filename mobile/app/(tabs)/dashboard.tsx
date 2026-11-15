@@ -7,18 +7,15 @@ import {
   ScrollView,
   TouchableOpacity,
   StatusBar,
-  Dimensions,
   Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useFocusEffect } from 'expo-router';
-import { Ionicons, MaterialIcons, FontAwesome5 } from '@expo/vector-icons';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { showAlert } from '@/lib/notify';
 import { useCoalesced, useQueueRooms, useSocketEvent } from '@/lib/realtime';
-
-const { width } = Dimensions.get('window');
 
 // "called" is what call-next sets now; "serving" is the older name for the same thing.
 const atCounter = (status?: string) => status === 'called' || status === 'serving';
@@ -27,11 +24,9 @@ export default function HomeScreen() {
   const { signOut } = useAuth();
   const [activeTickets, setActiveTickets] = useState<any[]>([]);
   const [availableQueues, setAvailableQueues] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
   const [joiningId, setJoiningId] = useState<string | null>(null);
 
   const fetchQueueData = async () => {
-    setLoading(true);
     try {
       // 1. Fetch user's status (returns array of active tickets)
       const statusRes = await api.get('/queues/my-status');
@@ -42,8 +37,6 @@ export default function HomeScreen() {
       setAvailableQueues(queuesRes.data);
     } catch (err) {
       console.error('Error fetching data:', err);
-    } finally {
-      setLoading(false);
     }
   };
 

@@ -1,5 +1,6 @@
 const express = require("express");
 const helmet = require("helmet");
+const mongoose = require("mongoose");
 const authRoutes = require("./routes/auth");
 const queueRoutes = require("./routes/queue");
 const { errorHandler, notFound } = require("./middleware/errorHandler");
@@ -22,9 +23,18 @@ function createApp(config) {
   app.use(corsFromAllowlist(config.corsOrigins));
   app.use(express.json({ limit: "100kb" }));
 
-  // Health check.
   app.get("/", (req, res) => {
     res.send("QueueEase API running");
+  });
+
+  // Health check for Docker and load balancers: 200 only when the database is
+  // connected, so a container that has lost MongoDB is reported unhealthy.
+  app.get("/api/health", (req, res) => {
+    const dbConnected = mongoose.connection.readyState === 1;
+    res
+      .status(dbConnected ? 200 : 503)
+      .set("Cache-Control", "no-store")
+      .json({ status: dbConnected ? "ok" : "unavailable", db: dbConnected ? "connected" : "disconnected" });
   });
 
   const limit = authLimiters(config.authRateLimit);

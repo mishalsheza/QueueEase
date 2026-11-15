@@ -1,0 +1,45 @@
+# Local backend with its own MongoDB:   docker compose up --build
+#   API:     http://localhost:5001   (health: /api/health)
+#   Stop:    docker compose down      (add -v to also delete the data and the generated JWT secret)
+#
+# Optional settings, from your shell or a .env file next to this one:
+#   API_PORT       host port for the API (default 5001)
+#   CORS_ORIGINS   browser origins allowed to call the API (default http://localhost:8081)
+#   JWT_SECRET     use your own secret instead of the one generated on first start
+#
+# Create an admin:   docker compose exec -e ADMIN_PASSWORD='...' api node scripts/create_admin.js --name "Jane Admin" --email jane@example.com
+
+services:
+  mongo:
+    image: mongo:8.0
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    # Not published to the host, so it can't clash with a local mongod on 27017.
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    init: true # forwards Ctrl+C / docker stop to node
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8081}
+      JWT_SECRET: ${JWT_SECRET:-}
+    ports:
+      - "${API_PORT:-5001}:5001"
+    volumes:
+      - api-secrets:/app/secrets
+    # Health check: defined in backend/Dockerfile (GET /api/health).
+
+volumes:
+  mongo-data:
+  api-secrets:
