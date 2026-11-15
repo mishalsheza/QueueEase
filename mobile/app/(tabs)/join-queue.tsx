@@ -13,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { api } from '@/lib/api';
 import { router } from 'expo-router';
 import { showAlert } from '@/lib/notify';
+import { useCoalesced, useQueueRooms, useSocketEvent } from '@/lib/realtime';
 
 type QueueItem = {
   _id: string;
@@ -30,18 +31,25 @@ export default function JoinQueueScreen() {
     fetchQueues();
   }, []);
 
-  const fetchQueues = async () => {
-    setLoading(true);
+  // quiet: a live refresh, so no spinner, disabled buttons or error pop-up.
+  const fetchQueues = async (quiet = false) => {
+    if (!quiet) setLoading(true);
     try {
       const res = await api.get('/queues');
       setQueues(res.data);
     } catch (err) {
       console.error('Error fetching queues:', err);
-      showAlert('Error', 'Could not load active queues.');
+      if (!quiet) showAlert('Error', 'Could not load active queues.');
     } finally {
-      setLoading(false);
+      if (!quiet) setLoading(false);
     }
   };
+
+  // Live waiting counts and queue list changes.
+  useQueueRooms(queues.map((q) => q._id));
+  const refreshFromSocket = useCoalesced(() => fetchQueues(true));
+  useSocketEvent('queue:update', refreshFromSocket);
+  useSocketEvent('queues:changed', refreshFromSocket);
 
   const handleJoinQueue = async (queueId: string, queueName: string) => {
     try {

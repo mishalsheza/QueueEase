@@ -258,7 +258,8 @@ function nothingAtCounter(ticketId, message) {
 
 /**
  * Calls the next person: completes whoever is at the counter (served), then
- * moves the lowest-numbered waiting ticket to "called". Works while paused
+ * moves the lowest-numbered waiting ticket to "called". Returns
+ * { queue, called } so the caller can notify the called user. Works while paused
  * (the waiting list is kept and can be worked through), not once closed.
  *
  * The unique "one ticket at the counter per queue" index means two call-nexts
@@ -273,17 +274,19 @@ async function callNext(queue) {
 
   await finishAtCounter(queue._id, "served");
 
+  let called;
   try {
-    await Ticket.findOneAndUpdate(
+    called = await Ticket.findOneAndUpdate(
       { queue: queue._id, status: "waiting" },
       { $set: Ticket.transition("called", { calledAt: new Date() }) },
-      { sort: { seq: 1 } }
+      { sort: { seq: 1 }, returnDocument: "after" }
     );
   } catch (err) {
     if (!isDuplicateKey(err)) throw err;
     throw new HttpError(409, "Another call-next for this queue is in progress, please refresh", "CONFLICT");
   }
-  return loadLive(queue._id);
+  // `called` is null only if the last waiting person left in between.
+  return { queue: await loadLive(queue._id), called };
 }
 
 /** Marks the person at the counter as served. */
@@ -345,7 +348,7 @@ async function closeQueue(queue) {
   );
   const servedCurrent = Boolean(await finishAtCounter(queue._id, "served"));
 
-  return { cancelled: cancelled.modifiedCount, servedCurrent };
+  return { cancelled: cancelled.modifiedCount, servedCurrent, queue: await loadLive(queue._id) };
 }
 
 // ---------------------------------------------------------------------------

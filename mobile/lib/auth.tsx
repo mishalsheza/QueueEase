@@ -45,10 +45,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = useCallback(async () => {
     await clearSession();
-    if (socket.connected) socket.disconnect();
     setUser(null);
     setStatus('signedOut');
   }, []);
+
+  // The live connection follows the session: connect when signed in (the
+  // handshake carries the token), disconnect on sign-out. A new login
+  // reconnects so the server sees the new account.
+  const userId = status === 'signedIn' ? user?.id : undefined;
+  useEffect(() => {
+    if (!userId) {
+      socket.disconnect();
+      return;
+    }
+    socket.disconnect();
+    socket.connect();
+    return () => {
+      socket.disconnect();
+    };
+  }, [userId]);
 
   const signIn = useCallback(async (token: string) => {
     setAuthToken(token);

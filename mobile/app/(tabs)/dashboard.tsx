@@ -1,5 +1,5 @@
 // app/(tabs)/dashboard.tsx
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -16,7 +16,7 @@ import { Ionicons, MaterialIcons, FontAwesome5 } from '@expo/vector-icons';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { showAlert } from '@/lib/notify';
-import { socket } from '@/lib/socket';
+import { useCoalesced, useQueueRooms, useSocketEvent } from '@/lib/realtime';
 
 const { width } = Dimensions.get('window');
 
@@ -71,30 +71,19 @@ export default function HomeScreen() {
   useFocusEffect(
     useCallback(() => {
       fetchQueueData();
-      
-      // Connect specifically when screen is focused
-      if (!socket.connected) {
-        socket.connect();
-      }
     }, [])
   );
 
-  useEffect(() => {
-    const onQueueUpdate = () => {
-      console.log('🔄 Dashboard: Queue update received via socket');
-      fetchQueueData();
-    };
-
-    socket.on('connect', () => {
-      console.log('✅ Connected to socket server');
-    });
-
-    socket.on('queueUpdated', onQueueUpdate);
-
-    return () => {
-      socket.off('queueUpdated', onQueueUpdate);
-    };
-  }, []);
+  // Live updates: watch every queue shown here (the user's own and the
+  // joinable ones). The server only allows queues the user may see. Bursts of
+  // events become one refresh; listeners are removed on unmount.
+  useQueueRooms([
+    ...availableQueues.map((q: any) => q._id),
+    ...activeTickets.filter((t: any) => t.status === 'waiting' || atCounter(t.status)).map((t: any) => String(t.queueId)),
+  ]);
+  const refreshFromSocket = useCoalesced(fetchQueueData);
+  useSocketEvent('queue:update', refreshFromSocket);
+  useSocketEvent('queues:changed', refreshFromSocket); // a queue was added, paused, resumed or closed
 
   const refreshQueue = () => {
     fetchQueueData();

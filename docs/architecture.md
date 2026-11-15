@@ -4,13 +4,15 @@ QueueEase is a queue management app: an Expo (React Native) client talks to a
 Node/Express API over REST, receives live updates over Socket.io, and stores
 data in MongoDB.
 
-This document has three parts:
+This document has four parts:
 
 1. **Before the role-based workflow change**: how the app behaved when it was
    audited, including the problems found. Kept for reference.
 2. **Role-based workflow (current)**: how login, roles and navigation work now.
 3. **Queue model and concurrency (current)**: the Ticket-first queue model,
    queue status (open / paused / closed), and before/after concurrency numbers.
+4. **Live updates (current)**: authenticated sockets, rooms, small update
+   messages and the "you're being called" notification.
 
 ---
 
@@ -195,8 +197,9 @@ sequenceDiagram
 **Status:** #1–#6, #12 and #13 are fixed by the role-based workflow (section 2).
 #9 and #10 are fixed by the queue model change (section 3): pause/resume is
 stored on the server and the next token comes from the server.
-#7 (socket rooms) is planned as part of socket authentication; #8 and #11 are
-still open.
+#7 is fixed by the live-updates change (section 4): the server puts each
+socket in the rooms it is entitled to, and the app subscribes to the queues it
+shows. #8 and #11 are still open.
 
 ---
 
@@ -212,10 +215,13 @@ flowchart LR
     Screens["Screens<br/>(tabs)/ for users · admin/ for admins"]
     API["lib/api.ts<br/>axios + Bearer JWT"]
     Store[("SecureStore (native)<br/>localStorage (web)<br/>token · role · profile")]
+    RT["lib/realtime.ts + lib/socket.ts<br/>one socket, token in handshake"]
     Auth --> Guards --> Screens
     Auth <--> Store
     Auth --> API
     Screens --> API
+    Auth -- "connect / disconnect" --> RT
+    Screens -- "hooks" --> RT
   end
 
   subgraph Server["Backend (backend/src)"]
@@ -226,10 +232,13 @@ flowchart LR
     Service["services/queueService<br/>atomic queue operations"]
     Models["Mongoose models<br/>User · Queue · Ticket"]
     Express --> Protect --> Role --> Owner --> Service --> Models
+    IO["realtime/socket.js<br/>handshake auth · rooms · events"]
+    Express -- "publish after each change" --> IO
   end
 
   DB[("MongoDB")]
   API -- "REST + JWT<br/>GET /api/auth/me for the role" --> Express
+  RT <-. "WebSocket (JWT)" .-> IO
   Models --> DB
 ```
 
@@ -494,8 +503,10 @@ stateDiagram-v2
    there. Paused queues probably shouldn't auto-expire.
 4. **Telling the user before it happens.** A "you're being called" push or
    socket message, and a warning shortly before the grace period ends.
-   Otherwise people get marked absent without knowing they were called. This
-   depends on authenticated, per-user sockets (A5) or push notifications.
+   Otherwise people get marked absent without knowing they were called. The
+   "you're being called" part now exists (`ticket:called`, section 4); a
+   "grace period ending" warning and push notifications for closed apps
+   don't yet.
 5. **Tests with a fake clock** (Jest fake timers) for the sweep.
 
 ### 3.7 Concurrency numbers (before / after)
@@ -529,3 +540,81 @@ the first unhandled rejection takes the whole process down.
 
 The same guarantees are checked on every test run by
 [`backend/tests/concurrency.test.js`](../backend/tests/concurrency.test.js).
+
+---
+
+## 4. Live updates (current)
+
+### 4.1 Before and after
+
+| | Before | After |
+|---|---|---|
+| Connecting | Anyone could connect, with no login | The JWT goes in the handshake (`auth: { token }`). Invalid, expired or deleted account: refused with `UNAUTHORIZED` |
+| Rooms | The client could join any room by name (`joinQueue`), including other people's | The server joins rooms itself, after checking entitlement |
+| What was sent | Whole queue documents, including every waiting user's id, broadcast to every client | A small summary with no user ids, sent only to people entitled to that queue |
+| Being called | Nothing; users had to keep refreshing | `ticket:called` goes only to the person called, on all their devices |
+| App listeners | The admin dashboard added a listener it never removed (one extra refresh per visit) | One listener per screen, removed on unmount |
+
+### 4.2 Rooms
+
+| Room | Who is in it | Joined how |
+|---|---|---|
+| `user:<id>` | every socket of that user | automatically on connect |
+| `admin:<id>` | an admin's sockets | automatically on connect (updates for every queue the admin owns) |
+| `users` | all regular users | automatically on connect (queue list changes) |
+| `queue:<id>` | watchers of one queue | `queue:subscribe`: admins only for queues they own, users for any queue they can see over REST (not closed) |
+
+### 4.3 Events
+
+| Event | To | Payload |
+|---|---|---|
+| `queue:update` | `queue:<id>` and the owner's `admin:<id>` | `{ queueId, reason, status, waitingCount, nowServing, nextToken }`, where `nowServing` is just the token |
+| `queues:changed` | `users` | `{ queueId, reason }` when a queue is created, paused, resumed or closed |
+| `ticket:called` | `user:<id>` of the person called | `{ queueId, queueName, token, calledAt }` |
+
+`reason` is one of `created, joined, left, called, served, no_show, paused,
+resumed, settings, closed`. Clients treat an update as "refresh this data"
+and re-read it over REST, so the socket never has to carry full documents.
+
+```mermaid
+sequenceDiagram
+  participant Admin as Admin app
+  participant API as REST API
+  participant IO as realtime/socket.js
+  participant Uma as Uma (called)
+  participant Vic as Vic (watching)
+  Admin->>API: POST /queues/:id/call-next
+  API->>API: atomic call-next (section 3)
+  API-->>Admin: 200 with the live queue
+  API->>IO: publishQueue(queue, "called")
+  IO-->>Vic: queue:update (queue room)
+  IO-->>Uma: queue:update (queue room)
+  IO-->>Admin: queue:update (admin room)
+  API->>IO: notifyCalled(ticket)
+  IO-->>Uma: ticket:called (her user room only)
+  Uma->>Uma: "It's your turn!" alert
+```
+
+### 4.4 In the app
+
+- [`lib/socket.ts`](../mobile/lib/socket.ts): one shared connection. The
+  token is read on every connect, so a new login uses the new token.
+- [`lib/auth.tsx`](../mobile/lib/auth.tsx): connects when signed in and
+  disconnects on sign-out. Screens never connect themselves.
+- [`lib/realtime.ts`](../mobile/lib/realtime.ts):
+  - `useSocketEvent` adds one listener and removes it on unmount.
+  - `useQueueRooms` subscribes to the queues a screen shows. It keeps a count
+    per queue, because the user tabs stay mounted together and one screen
+    leaving must not unsubscribe another. It re-subscribes after a reconnect.
+  - `useCoalesced` turns a burst of updates into one refresh.
+- The user tabs layout shows "It's your turn!" on `ticket:called`, whichever
+  tab is open.
+
+### 4.5 Known limits
+
+- The token is checked when a socket connects. A socket that is already
+  connected stays connected if its token expires or the account is deleted,
+  until it disconnects. REST calls are still checked on every request.
+- Socket.io CORS origins are still a hard-coded list in `server.js`.
+- `ticket:called` only reaches an open app. A closed app needs push
+  notifications.

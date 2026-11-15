@@ -29,8 +29,14 @@ export const api = axios.create({
   timeout: 30000,
 });
 
+let currentToken: string | null = null;
+
+/** The token in use, for the socket handshake (lib/socket.ts). */
+export const getAuthToken = () => currentToken;
+
 // Set (or clear, with null) the auth token for all requests
 export const setAuthToken = (token: string | null) => {
+  currentToken = token;
   if (token) {
     api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
   } else {

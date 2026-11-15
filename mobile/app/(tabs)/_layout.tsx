@@ -1,9 +1,25 @@
 // app/(tabs)/_layout.tsx
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { showAlert } from '@/lib/notify';
+import { useSocketEvent, type TicketCalled } from '@/lib/realtime';
+
+/**
+ * "You're being called": the server sends ticket:called only to the user
+ * call-next picked (all their devices). Mounted here so it works on every
+ * user tab. The dashboard refreshes itself from the queue update.
+ */
+function CalledNotifier() {
+  useSocketEvent<TicketCalled>('ticket:called', (e) => {
+    showAlert("It's your turn!", `Token ${e.token}: please go to the counter at ${e.queueName}.`);
+  });
+  return null;
+}
 
 export default function TabLayout() {
   return (
+    <>
+    <CalledNotifier />
     <Tabs
       screenOptions={{
         headerShown: false,
@@ -55,5 +71,6 @@ export default function TabLayout() {
         }}
       />
     </Tabs>
+    </>
   );
 }

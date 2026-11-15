@@ -13,6 +13,7 @@ import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { api } from '@/lib/api';
+import { useCoalesced, useSocketEvent } from '@/lib/realtime';
 
 type UserInQueue = {
   id: string;
@@ -52,6 +53,9 @@ export default function UsersScreen() {
   useEffect(() => {
     fetchUsers();
   }, []);
+
+  // Live: any change to one of this admin's queues refreshes the report.
+  useSocketEvent('queue:update', useCoalesced(fetchUsers));
 
   const filteredUsers = users.filter(user => 
     filter === 'all' ? true : user.status === filter

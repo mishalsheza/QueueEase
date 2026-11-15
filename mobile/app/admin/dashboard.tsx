@@ -17,7 +17,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { showAlert } from '@/lib/notify';
-import { socket } from '@/lib/socket';
+import { useCoalesced, useSocketConnected, useSocketEvent } from '@/lib/realtime';
 
 const { width } = Dimensions.get('window');
 
@@ -90,7 +90,7 @@ export default function AdminDashboard() {
     graceMinutes: String(DEFAULT_GRACE_MINUTES), // text while typing, checked on create
   });
 
-  const [isConnected, setIsConnected] = useState(socket.connected);
+  const isConnected = useSocketConnected();
 
   // Ticks so "called N min ago" and the overdue hint stay current.
   const [now, setNow] = useState(Date.now());
@@ -107,30 +107,14 @@ export default function AdminDashboard() {
     }, [])
   );
 
-  useEffect(() => {
-    socket.connect();
-
-    const onConnect = () => setIsConnected(true);
-    const onDisconnect = () => setIsConnected(false);
-    const onQueueUpdate = () => {
-      console.log('🔄 Dashboard: Queue update received via socket');
-      fetchQueues();
-    };
-
-    socket.on('connect', onConnect);
-    socket.on('disconnect', onDisconnect);
-    socket.on('queueUpdated', () => {
-      console.log('🔄 Dashboard: Queue update received via socket');
-      fetchQueues();
-      fetchCompleted();
-    });
-
-    return () => {
-      socket.off('connect', onConnect);
-      socket.off('disconnect', onDisconnect);
-      socket.off('queueUpdated', onQueueUpdate);
-    };
-  }, []);
+  // Live updates: the server puts admins in a room for every queue they own,
+  // so this screen needs no per-queue subscriptions. One listener, removed on
+  // unmount (the old effect added an anonymous listener it never removed).
+  const refreshFromSocket = useCoalesced(() => {
+    fetchQueues();
+    fetchCompleted();
+  });
+  useSocketEvent('queue:update', refreshFromSocket);
 
   const fetchQueues = async () => {
     try {

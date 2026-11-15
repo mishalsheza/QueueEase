@@ -7,6 +7,7 @@ const asyncHandler = require("../utils/asyncHandler");
 const { requireRole } = require("../middleware/requireRole");
 const { requireQueueOwner } = require("../middleware/requireQueueOwner");
 const svc = require("../services/queueService");
+const { publishQueue, notifyCalled } = require("../realtime/socket");
 
 // Queue logic lives in services/queueService.js; routes handle HTTP only.
 
@@ -17,14 +18,8 @@ router.param("queueId", (req, res, next, id) => {
   return res.status(400).json({ message: "Invalid _id", code: "INVALID_ID" });
 });
 
-/** Tells clients watching this queue (and, for now, everyone) to refresh. */
-const notify = (req, payload, room) => {
-  const io = req.app.get("io");
-  if (!io) return;
-  // NOTE: global broadcast and unauthenticated sockets are plan item A5.
-  if (room) io.to(room).emit("queueUpdated", payload);
-  else io.emit("queueUpdated", payload);
-};
+/** Sends a small update to everyone entitled to see this queue (see realtime/socket.js). */
+const publish = (req, queue, reason) => publishQueue(req.app.get("io"), queue, reason);
 
 /** Admin creates a queue. */
 router.post("/", protect, requireRole("admin"), asyncHandler(async (req, res) => {
@@ -35,7 +30,9 @@ router.post("/", protect, requireRole("admin"), asyncHandler(async (req, res) =>
     section: req.body.section || "A",
     ...(req.body.graceMinutes !== undefined && { graceMinutes: req.body.graceMinutes }),
   });
-  res.status(201).json(await svc.withLiveState(queue));
+  const live = await svc.withLiveState(queue);
+  publish(req, live, "created");
+  res.status(201).json(live);
 }));
 
 /**
@@ -61,14 +58,14 @@ router.get("/my-history", protect, asyncHandler(async (req, res) => {
 /** User joins a queue (409 if it is paused or closed). */
 router.post("/:queueId/join", protect, requireRole("user"), asyncHandler(async (req, res) => {
   const { queue, created } = await svc.joinQueue(req.params.queueId, req.user);
-  if (created) notify(req, queue, req.params.queueId);
+  if (created) publish(req, queue, "joined");
   res.json(queue);
 }));
 
 /** User leaves a queue. */
 router.post("/:queueId/leave", protect, requireRole("user"), asyncHandler(async (req, res) => {
   const queue = await svc.leaveQueue(req.params.queueId, req.user);
-  notify(req, queue, req.params.queueId);
+  publish(req, queue, "left");
   res.json(queue);
 }));
 
@@ -79,8 +76,9 @@ router.get("/:queueId/position", protect, asyncHandler(async (req, res) => {
 
 /** Admin calls the next person. */
 router.post("/:queueId/call-next", protect, requireRole("admin"), requireQueueOwner, asyncHandler(async (req, res) => {
-  const queue = await svc.callNext(req.queue);
-  notify(req, queue);
+  const { queue, called } = await svc.callNext(req.queue);
+  publish(req, queue, "called");
+  notifyCalled(req.app.get("io"), called, queue.name);
   res.json({ message: "Next user called", queue });
 }));
 
@@ -90,7 +88,7 @@ router.post("/:queueId/call-next", protect, requireRole("admin"), requireQueueOw
  */
 router.post("/:queueId/serve", protect, requireRole("admin"), requireQueueOwner, asyncHandler(async (req, res) => {
   const queue = await svc.serveCurrent(req.queue, req.body && req.body.ticketId);
-  notify(req, queue);
+  publish(req, queue, "served");
   res.json({ message: "User served", queue });
 }));
 
@@ -100,19 +98,21 @@ router.post("/:queueId/serve", protect, requireRole("admin"), requireQueueOwner,
  */
 router.post("/:queueId/no-show", protect, requireRole("admin"), requireQueueOwner, asyncHandler(async (req, res) => {
   const { ticket, queue } = await svc.markNoShow(req.queue, req.body && req.body.ticketId);
-  notify(req, queue);
+  publish(req, queue, "no_show");
   res.json({ message: "Marked as no-show", token: ticket.token, queue });
 }));
 
 /** Admin changes queue settings: body { graceMinutes } (1-120). */
 router.patch("/:queueId/settings", protect, requireRole("admin"), requireQueueOwner, asyncHandler(async (req, res) => {
-  res.json({ message: "Settings saved", queue: await svc.updateSettings(req.queue, req.body) });
+  const queue = await svc.updateSettings(req.queue, req.body);
+  publish(req, queue, "settings");
+  res.json({ message: "Settings saved", queue });
 }));
 
 /** Admin pauses or resumes a queue: body { status: "paused" | "open" }. */
 router.patch("/:queueId/status", protect, requireRole("admin"), requireQueueOwner, asyncHandler(async (req, res) => {
   const queue = await svc.setQueueStatus(req.queue, req.body && req.body.status);
-  notify(req, queue);
+  publish(req, queue, queue.status === "paused" ? "paused" : "resumed");
   res.json({ message: queue.status === "paused" ? "Queue paused" : "Queue resumed", queue });
 }));
 
@@ -122,8 +122,8 @@ router.patch("/:queueId/status", protect, requireRole("admin"), requireQueueOwne
  * DELETE /:queueId is kept as an alias so existing clients keep working.
  */
 const closeHandler = asyncHandler(async (req, res) => {
-  const result = await svc.closeQueue(req.queue);
-  notify(req, { type: "closed", queueId: req.params.queueId });
+  const { queue, ...result } = await svc.closeQueue(req.queue);
+  publish(req, queue, "closed");
   res.json({ message: "Queue closed", ...result });
 });
 router.post("/:queueId/close", protect, requireRole("admin"), requireQueueOwner, closeHandler);
