@@ -25,25 +25,23 @@ type QueueItem = {
 
 export default function JoinQueueScreen() {
   const [queues, setQueues] = useState<QueueItem[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true); // until the first load finishes
+
+  // quiet: a live refresh, so no error pop-up. State is only set in the
+  // promise callbacks, never synchronously inside an effect.
+  const fetchQueues = (quiet = false) =>
+    api
+      .get('/queues')
+      .then((res) => setQueues(res.data))
+      .catch((err) => {
+        console.error('Error fetching queues:', err);
+        if (!quiet) showAlert('Error', 'Could not load active queues.');
+      })
+      .finally(() => setLoading(false));
 
   useEffect(() => {
     fetchQueues();
   }, []);
-
-  // quiet: a live refresh, so no spinner, disabled buttons or error pop-up.
-  const fetchQueues = async (quiet = false) => {
-    if (!quiet) setLoading(true);
-    try {
-      const res = await api.get('/queues');
-      setQueues(res.data);
-    } catch (err) {
-      console.error('Error fetching queues:', err);
-      if (!quiet) showAlert('Error', 'Could not load active queues.');
-    } finally {
-      if (!quiet) setLoading(false);
-    }
-  };
 
   // Live waiting counts and queue list changes.
   useQueueRooms(queues.map((q) => q._id));
@@ -72,7 +70,7 @@ export default function JoinQueueScreen() {
 
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-      <StatusBar barStyle="light-content" backgroundColor="#667eea" />
+      <StatusBar barStyle="light-content" />
       <View style={styles.header}>
         <Text style={styles.title}>Join a Queue</Text>
         <Text style={styles.subtitle}>

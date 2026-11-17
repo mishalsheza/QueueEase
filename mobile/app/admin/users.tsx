@@ -31,19 +31,19 @@ export default function UsersScreen() {
   const [users, setUsers] = useState<UserInQueue[]>([]);
   const [filter, setFilter] = useState<'all' | 'waiting' | 'serving' | 'served' | 'cancelled'>('all');
 
-  const fetchUsers = async () => {
-    try {
-      const res = await api.get('/queues/admin/users-report');
-      // Format the date using native methods
-      const formattedData = res.data.map((u: any) => ({
-        ...u,
-        joinedAt: u.joinedAt ? new Date(u.joinedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : '--:--'
-      }));
-      setUsers(formattedData);
-    } catch (err) {
-      console.error('Error fetching users:', err);
-    }
-  };
+  // State is only set in the promise callback, never synchronously inside an effect.
+  const fetchUsers = () =>
+    api
+      .get('/queues/admin/users-report')
+      .then((res) => {
+        // Format the date using native methods
+        const formattedData = res.data.map((u: any) => ({
+          ...u,
+          joinedAt: u.joinedAt ? new Date(u.joinedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : '--:--'
+        }));
+        setUsers(formattedData);
+      })
+      .catch((err) => console.error('Error fetching users:', err));
 
   useEffect(() => {
     fetchUsers();
@@ -86,7 +86,7 @@ export default function UsersScreen() {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#667eea" />
+      <StatusBar barStyle="light-content" />
       
       {/* Header */}
       <LinearGradient

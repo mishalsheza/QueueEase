@@ -81,28 +81,11 @@ export default function AdminDashboard() {
   const isConnected = useSocketConnected();
 
   // Ticks so "called N min ago" and the overdue hint stay current.
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 15000);
     return () => clearInterval(id);
   }, []);
-
-  // Data fetching initialization
-  useFocusEffect(
-    useCallback(() => {
-      fetchQueues();
-      fetchCompleted();
-    }, [])
-  );
-
-  // Live updates: the server puts admins in a room for every queue they own,
-  // so this screen needs no per-queue subscriptions. One listener, removed on
-  // unmount (the old effect added an anonymous listener it never removed).
-  const refreshFromSocket = useCoalesced(() => {
-    fetchQueues();
-    fetchCompleted();
-  });
-  useSocketEvent('queue:update', refreshFromSocket);
 
   const fetchQueues = async () => {
     try {
@@ -121,6 +104,23 @@ export default function AdminDashboard() {
       console.error('Error fetching completed tickets:', err);
     }
   };
+
+  // Data fetching initialization
+  useFocusEffect(
+    useCallback(() => {
+      fetchQueues();
+      fetchCompleted();
+    }, [])
+  );
+
+  // Live updates: the server puts admins in a room for every queue they own,
+  // so this screen needs no per-queue subscriptions. One listener, removed on
+  // unmount (the old effect added an anonymous listener it never removed).
+  const refreshFromSocket = useCoalesced(() => {
+    fetchQueues();
+    fetchCompleted();
+  });
+  useSocketEvent('queue:update', refreshFromSocket);
 
   const handleCreateQueue = async () => {
     if (!newQueue.name.trim()) {
@@ -266,7 +266,7 @@ export default function AdminDashboard() {
 
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-      <StatusBar barStyle="light-content" backgroundColor="#667eea" />
+      <StatusBar barStyle="light-content" />
       
       {/* Header */}
       <LinearGradient

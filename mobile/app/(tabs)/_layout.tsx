@@ -16,11 +16,23 @@ function CalledNotifier() {
   return null;
 }
 
+// Dashboard is the default tab: where a user lands after signing in, and where
+// Back goes from the other tabs. Since SDK 58, without this the router opens
+// the first route alphabetically (Alerts).
+export const unstable_settings = {
+  anchor: 'dashboard',
+};
+
+// The tab bar passes our tint colours (strings); RN 0.88's ColorValue type
+// also allows numbers and null, which Ionicons doesn't accept.
+const tint = (color: unknown) => (typeof color === 'string' ? color : undefined);
+
 export default function TabLayout() {
   return (
     <>
     <CalledNotifier />
     <Tabs
+      backBehavior="initialRoute"
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: '#667eea',
@@ -39,7 +51,7 @@ export default function TabLayout() {
         options={{
           title: 'Dashboard',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="speedometer" size={size} color={color} />
+            <Ionicons name="speedometer" size={size} color={tint(color)} />
           ),
         }}
       />
@@ -48,7 +60,7 @@ export default function TabLayout() {
         options={{
           title: 'Join Queue',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="add-circle-outline" size={size} color={color} />
+            <Ionicons name="add-circle-outline" size={size} color={tint(color)} />
           ),
         }}
       />
@@ -57,7 +69,7 @@ export default function TabLayout() {
         options={{
           title: 'Alerts',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="notifications-outline" size={size} color={color} />
+            <Ionicons name="notifications-outline" size={size} color={tint(color)} />
           ),
         }}
       />
@@ -66,7 +78,7 @@ export default function TabLayout() {
         options={{
           title: 'Profile',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="person-outline" size={size} color={color} />
+            <Ionicons name="person-outline" size={size} color={tint(color)} />
           ),
         }}
       />

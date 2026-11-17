@@ -1,3 +1,4 @@
+/// <reference types="node" />
 // Run with: npm test (node --test). Plain Node, no Jest or React Native needed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

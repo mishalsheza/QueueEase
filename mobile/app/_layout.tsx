@@ -28,9 +28,9 @@ const ALLOWED: Record<'signedOut' | Role, (path: string) => boolean> = {
  *    screen outside it can't be rendered, even by typing its URL.
  * 2. When the session or URL changes and the current path isn't allowed for
  *    this state (after login/logout, or a typed/deep-linked URL), we replace
- *    it with the state's home screen. Without this, expo-router falls back to
- *    the first remaining group without choosing a tab, so the URL can say
- *    /alerts while the Dashboard tab is shown.
+ *    it with the state's home screen. Right after login the router opens the
+ *    group's default screen, set by `anchor` in its layout (Dashboard for
+ *    users, see app/(tabs)/_layout.tsx).
  *
  * These guards only hide screens. The backend still checks the role on every
  * request (403 for the wrong role).

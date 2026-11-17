@@ -5,7 +5,7 @@ import { Stack } from 'expo-router';
 // Keeps the dashboard underneath /admin/users when that URL is opened
 // directly, so Back returns to the dashboard.
 export const unstable_settings = {
-  initialRouteName: 'dashboard',
+  anchor: 'dashboard', // replaces the deprecated initialRouteName
 };
 
 export default function AdminLayout() {

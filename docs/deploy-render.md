@@ -169,8 +169,18 @@ Cloudflare node's address. Requests from one client landed on different nodes
 (A and B), and a different network landed on a node already in use (D). So the
 value is **2**. `backend/tests/security.test.js` reproduces both behaviours.
 
-**With `TRUST_PROXY=2`:** to be confirmed by rerunning the check. Expected:
-A 19, B 18, C 17, D 19.
+**Rechecked on 2026-11-17, with `TRUST_PROXY=2`** (A to C from a phone
+hotspot, D from home Wi-Fi; which network goes first doesn't matter):
+
+```
+A: remaining=19
+B: remaining=18    <- same client, same counter
+C: remaining=17    <- fake header ignored
+D: remaining=19    <- other network, its own counter
+```
+
+Each client gets its own counter and can't fake its IP, so `2` is the
+confirmed value for Render.
 
 ## 5. Point the Expo app at it
 
