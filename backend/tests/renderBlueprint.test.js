@@ -37,7 +37,7 @@ test("sets every variable the startup check requires; Render supplies PORT", () 
     MONGO_URI: "sync:false",
     JWT_SECRET: "generateValue",
     CORS_ORIGINS: "sync:false",
-    TRUST_PROXY: "1",
+    TRUST_PROXY: "2",
     NODE_VERSION: "22",
   });
   expect(envVars.PORT).toBeUndefined();
@@ -48,7 +48,7 @@ test("a generated JWT_SECRET passes the startup length check", () => {
   const { loadConfig, MIN_JWT_SECRET_LENGTH } = require("../src/config/env");
   const generated = require("crypto").randomBytes(32).toString("base64");
   expect(generated.length).toBeGreaterThanOrEqual(MIN_JWT_SECRET_LENGTH);
-  const { errors } = loadConfig({ MONGO_URI: "mongodb+srv://u:p@c.mongodb.net/queueease", JWT_SECRET: generated, CORS_ORIGINS: "http://localhost:8081", TRUST_PROXY: "1", PORT: "10000" });
+  const { errors } = loadConfig({ MONGO_URI: "mongodb+srv://u:p@c.mongodb.net/queueease", JWT_SECRET: generated, CORS_ORIGINS: "http://localhost:8081", TRUST_PROXY: "2", PORT: "10000" });
   expect(errors).toEqual([]);
 });
 

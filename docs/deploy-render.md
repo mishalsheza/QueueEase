@@ -56,7 +56,7 @@ Service → **Environment**. After the Blueprint is applied, check that it match
 | `MONGO_URI` | `mongodb+srv://queueease-render:<password>@<cluster>.mongodb.net/queueease?retryWrites=true&w=majority&appName=queueease-render` | You, when creating the Blueprint |
 | `JWT_SECRET` | A random 44-character value | Render (`generateValue`). Don't paste your local one. |
 | `CORS_ORIGINS` | `http://localhost:8081`, or your deployed web app's origin(s), comma-separated | You, when creating the Blueprint |
-| `TRUST_PROXY` | `1` | Blueprint (check it after the first deploy, see step 4) |
+| `TRUST_PROXY` | `2` | Blueprint. Two proxies sit in front of the app; see step 4. |
 | `NODE_VERSION` | `22` | Blueprint |
 
 Notes:
@@ -119,29 +119,58 @@ cd backend
 ADMIN_PASSWORD='...' node scripts/create_admin.js --name "Your Name" --email you@example.com
 ```
 
-**Check `TRUST_PROXY`.** Render doesn't document how many proxies sit in front
-of the app, and the rate limiter needs `TRUST_PROXY` to match. Each request
-below sends an empty register form: it gets a 400 and creates nothing, but it
-uses 1 of your IP's 20 register attempts per 15 minutes.
+**Check `TRUST_PROXY`.**
 
-```bash
-URL=https://queueease-api.onrender.com
-probe() { curl -s -o /dev/null -D - -X POST $URL/api/auth/register \
-  -H 'content-type: application/json' "$@" -d '{}' | grep -i '^ratelimit:'; }
-probe; probe                                   # remaining=19, then 18
-probe -H 'X-Forwarded-For: 203.0.113.7'        # should be 17
+`TRUST_PROXY` must equal the number of proxies in front of the app, so the
+rate limiter counts each client and not each proxy. On Render there are two:
+Cloudflare, then Render's load balancer
+([Render: How Render handles DDoS attacks](https://render.com/articles/how-render-handles-ddos-attacks)).
+Each one appends to `X-Forwarded-For`, so the app sees:
+
+```
+X-Forwarded-For: <anything the client sent>, <client IP>, <Cloudflare node IP>
+                                             ^ TRUST_PROXY=2 picks this one
 ```
 
-Then run `probe` once from another network, such as your phone's hotspot.
+To check it, send a few empty register forms. Each gets a 400 and creates
+nothing, but uses 1 of your IP's 20 register attempts per 15 minutes. Run it
+all within a few minutes, because the counters reset when the service restarts
+or sleeps.
+
+```bash
+URL=https://queueease-api-51p2.onrender.com
+probe() { curl -s -o /dev/null -D - -X POST "$URL/api/auth/register" \
+  -H 'content-type: application/json' "$@" -d '{}' | grep -i '^ratelimit:'; }
+curl -s "$URL/api/health"; echo                              # wake it
+echo "A:"; probe
+echo "B:"; probe
+echo "C (fake X-Forwarded-For):"; probe -H 'X-Forwarded-For: 203.0.113.7'
+# then, with the laptop on your phone's hotspot (another network):
+echo "D (other network):"; probe
+```
 
 | Result | Meaning |
 | --- | --- |
-| The fake header continues the count (17), and the other network starts fresh (19) | Correct: each client is counted separately and can't fake its IP. |
-| The fake header starts a fresh count (19) | Clients can bypass the limit by sending the header. `TRUST_PROXY` is trusting too much. |
-| The other network continues your count | Everyone shares one counter (the proxy's IP): one person's failed logins lock out everyone. Not enough hops are trusted. |
+| B is one lower than A, C carries on from B, and D starts fresh (19) | Correct: each client has its own counter, and the fake header is ignored. |
+| Counts jump around: B doesn't follow A, or D continues your count | Too few hops trusted. The limiter is counting per Cloudflare node, so strangers share counters and one client is spread across several. Raise `TRUST_PROXY` by 1. |
+| C starts a fresh count (19) | Too many hops trusted. Clients can dodge the limit by sending the header. Lower `TRUST_PROXY` by 1. |
 
-In either failing case, leave the service as it is and tell me the result.
-`TRUST_PROXY` only accepts `1` today.
+**Measured on 2026-11-17, with `TRUST_PROXY=1`:**
+
+```
+A: remaining=19, reset=900
+B: remaining=19, reset=900    <- same client, a second fresh counter
+C: remaining=18, reset=900    <- fake header ignored (good)
+D: remaining=17, reset=858    <- other network, continues a counter from ~42 s earlier
+```
+
+That is the "too few hops" row. With one hop trusted, `req.ip` was the
+Cloudflare node's address. Requests from one client landed on different nodes
+(A and B), and a different network landed on a node already in use (D). So the
+value is **2**. `backend/tests/security.test.js` reproduces both behaviours.
+
+**With `TRUST_PROXY=2`:** to be confirmed by rerunning the check. Expected:
+A 19, B 18, C 17, D 19.
 
 ## 5. Point the Expo app at it
 

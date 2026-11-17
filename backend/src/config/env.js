@@ -13,8 +13,11 @@
  *   PORT                      default 5001
  *   AUTH_RATE_LIMIT_MAX       login/register attempts per IP per window, default 20
  *   AUTH_RATE_LIMIT_WINDOW_MIN window length in minutes, default 15
- *   TRUST_PROXY               "1" when behind one reverse proxy (so rate limits
- *                             see the client IP, not the proxy's)
+ *   TRUST_PROXY               number of reverse proxies in front of the app, so
+ *                             rate limits see the client's IP, not a proxy's.
+ *                             Unset or 0 when clients connect directly. Render
+ *                             needs 2 (Cloudflare, then Render's load balancer);
+ *                             see docs/deploy-render.md.
  */
 const MIN_JWT_SECRET_LENGTH = 32;
 
@@ -71,6 +74,9 @@ function loadConfig(env = process.env) {
   if (max.error) errors.push("AUTH_RATE_LIMIT_MAX must be a positive whole number");
   const windowMin = positiveInt(env.AUTH_RATE_LIMIT_WINDOW_MIN, 15);
   if (windowMin.error) errors.push("AUTH_RATE_LIMIT_WINDOW_MIN must be a positive whole number");
+  // Not "true": trusting every hop lets clients pick their own IP.
+  const proxyHops = env.TRUST_PROXY === "0" ? { value: 0 } : positiveInt(env.TRUST_PROXY, 0);
+  if (proxyHops.error) errors.push("TRUST_PROXY must be the number of reverse proxies in front of the app (e.g. 1 or 2), or unset");
 
   return {
     errors,
@@ -80,7 +86,7 @@ function loadConfig(env = process.env) {
       corsOrigins,
       port: port.value,
       authRateLimit: { max: max.value, windowMs: (windowMin.value || 15) * 60 * 1000 },
-      trustProxy: env.TRUST_PROXY === "1",
+      trustProxy: proxyHops.value || 0, // number of proxy hops; 0 = off
     },
   };
 }

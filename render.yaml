@@ -30,8 +30,9 @@ services:
       # Browser origins allowed to call the API. Native apps don't need one.
       - key: CORS_ORIGINS
         sync: false
-      # Render sits in front of the app as a reverse proxy; verify after the
-      # first deploy (docs/deploy-render.md, "Check TRUST_PROXY").
+      # Two proxies sit in front of the app: Cloudflare, then Render's load
+      # balancer. With 1, rate limits counted per proxy node instead of per
+      # client (measured; docs/deploy-render.md, "Check TRUST_PROXY").
       - key: TRUST_PROXY
-        value: "1"
+        value: "2"
       # PORT is set by Render; the server reads it.

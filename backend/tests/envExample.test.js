@@ -31,7 +31,7 @@ test("copied unchanged, the only startup error is the placeholder secret", () =>
 test("with a real secret, the example passes the startup check with the documented defaults", () => {
   const { errors, config } = loadConfig({ ...example, JWT_SECRET: "x".repeat(48) });
   expect(errors).toEqual([]);
-  expect(config).toMatchObject({ port: 5001, corsOrigins: ["http://localhost:8081"], trustProxy: false, authRateLimit: { max: 20, windowMs: 15 * 60 * 1000 } });
+  expect(config).toMatchObject({ port: 5001, corsOrigins: ["http://localhost:8081"], trustProxy: 0, authRateLimit: { max: 20, windowMs: 15 * 60 * 1000 } });
 });
 
 test("the example contains no real-looking secrets and points at a local database", () => {

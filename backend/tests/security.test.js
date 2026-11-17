@@ -70,7 +70,7 @@ describe("CORS allowlist (REST)", () => {
 describe("auth rate limits", () => {
   // Own app with a low limit; the shared test app's limit is very high.
   const limited = (overrides = {}) =>
-    createApp({ corsOrigins: [ALLOWED], authRateLimit: { max: 3, windowMs: 60 * 1000 }, trustProxy: false, ...overrides });
+    createApp({ corsOrigins: [ALLOWED], authRateLimit: { max: 3, windowMs: 60 * 1000 }, trustProxy: 0, ...overrides });
   const creds = { email: "ann@test.com", password: "secret123" };
   beforeEach(async () => {
     await request(app).post("/api/auth/register").send({ name: "Ann", ...creds });
@@ -123,12 +123,37 @@ describe("auth rate limits", () => {
   });
 
   test("with TRUST_PROXY=1, clients behind the proxy are counted separately", async () => {
-    const a = limited({ trustProxy: true });
+    const a = limited({ trustProxy: 1 });
     for (let i = 0; i < 3; i += 1) {
       await request(a).post("/api/auth/login").set("X-Forwarded-For", "10.0.0.1").send({ ...creds, password: "wrong" });
     }
     expect((await request(a).post("/api/auth/login").set("X-Forwarded-For", "10.0.0.1").send({ ...creds, password: "wrong" })).status).toBe(429);
     expect((await request(a).post("/api/auth/login").set("X-Forwarded-For", "10.0.0.2").send({ ...creds, password: "wrong" })).status).toBe(401);
+  });
+
+  // Render: client -> Cloudflare -> Render's load balancer -> app. Cloudflare
+  // appends the client's IP, the load balancer appends the Cloudflare node's,
+  // and the load balancer itself is the socket address. Anything the client
+  // sends stays to the left.
+  const viaRender = (client, cfNode, spoofed) => [spoofed, client, cfNode].filter(Boolean).join(", ");
+  const failLogin = (a, xff) => request(a).post("/api/auth/login").set("X-Forwarded-For", xff).send({ ...creds, password: "wrong" });
+
+  test("behind two proxies, TRUST_PROXY=1 keys on the Cloudflare node (what the live check showed)", async () => {
+    const a = limited({ trustProxy: 1 });
+    // One client, three different Cloudflare nodes: three separate counters, never limited.
+    for (const node of ["172.70.0.1", "172.70.0.2", "172.70.0.3"]) expect((await failLogin(a, viaRender("198.51.100.7", node))).status).toBe(401);
+    expect((await failLogin(a, viaRender("198.51.100.7", "172.70.0.4"))).status).toBe(401);
+    // ...while a different client on an already-used node shares that node's counter.
+    expect((await failLogin(a, viaRender("203.0.113.50", "172.70.0.1"))).status).toBe(401);
+  });
+
+  test("behind two proxies, TRUST_PROXY=2 counts the real client, whatever node or spoofed header", async () => {
+    const a = limited({ trustProxy: 2 });
+    const tries = [["172.70.0.1", undefined], ["172.70.0.2", "10.9.9.9"], ["172.70.0.3", "1.2.3.4"]];
+    for (const [node, spoofed] of tries) expect((await failLogin(a, viaRender("198.51.100.7", node, spoofed))).status).toBe(401);
+    expect((await failLogin(a, viaRender("198.51.100.7", "172.70.0.4", "5.6.7.8"))).status).toBe(429);
+    // Another client, through a node the first one used, is unaffected.
+    expect((await failLogin(a, viaRender("203.0.113.50", "172.70.0.1"))).status).toBe(401);
   });
 });
 
@@ -186,7 +211,19 @@ describe("startup configuration check", () => {
     const { errors, config } = loadConfig(good);
     expect(errors).toEqual([]);
     expect(config.corsOrigins).toEqual(["http://localhost:8081", "https://app.example.com"]);
-    expect(config).toMatchObject({ port: 5001, authRateLimit: { max: 20, windowMs: 15 * 60 * 1000 }, trustProxy: false });
+    expect(config).toMatchObject({ port: 5001, authRateLimit: { max: 20, windowMs: 15 * 60 * 1000 }, trustProxy: 0 });
+  });
+
+  test.each([["", 0], ["0", 0], ["1", 1], ["2", 2], ["3", 3]])("TRUST_PROXY=%p -> %p proxy hops", (value, hops) => {
+    const { errors, config } = loadConfig({ ...good, TRUST_PROXY: value });
+    expect(errors).toEqual([]);
+    expect(config.trustProxy).toBe(hops);
+  });
+
+  test.each(["true", "yes", "-1", "1.5", "two"])("TRUST_PROXY=%p is rejected (\"true\" would let clients pick their IP)", (value) => {
+    expect(loadConfig({ ...good, TRUST_PROXY: value }).errors).toEqual([
+      "TRUST_PROXY must be the number of reverse proxies in front of the app (e.g. 1 or 2), or unset",
+    ]);
   });
 
   test("everything missing -> every problem listed at once", () => {

@@ -12,12 +12,14 @@ const { loadConfig } = require("./config/env");
  * can import it directly. server.js validates the environment, then does the
  * DB connection, Socket.io and listen.
  *
- * config: { corsOrigins, authRateLimit: { max, windowMs }, trustProxy }
+ * config: { corsOrigins, authRateLimit: { max, windowMs }, trustProxy (proxy hops, 0 = off) }
  */
 function createApp(config) {
   const app = express();
 
-  if (config.trustProxy) app.set("trust proxy", 1); // client IP from X-Forwarded-For (one proxy)
+  // req.ip = the X-Forwarded-For entry added by the outermost of `trustProxy`
+  // proxies. Entries further left were sent by the client and are ignored.
+  if (Number.isInteger(config.trustProxy) && config.trustProxy > 0) app.set("trust proxy", config.trustProxy);
 
   app.use(helmet()); // security headers; also removes X-Powered-By
   app.use(corsFromAllowlist(config.corsOrigins));
