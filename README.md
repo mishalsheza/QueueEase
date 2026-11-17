@@ -29,6 +29,13 @@ A `JWT_SECRET` is generated on first start and kept in a volume. See
 [docker-compose.yml](docker-compose.yml) for the optional settings and for
 creating an admin.
 
+## Deploying
+
+The API deploys to Render from [render.yaml](render.yaml), with MongoDB
+Atlas for data. Step-by-step setup, the environment variable checklist, Atlas
+Network Access and pointing the app at the deployed URL:
+[docs/deploy-render.md](docs/deploy-render.md).
+
 ## Checks (what CI runs on Node 22)
 
 ```bash
