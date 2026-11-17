@@ -10,6 +10,7 @@
     "bench:concurrency": "node bench/concurrency.js",
     "migrate:queues": "node scripts/migrate_queue_model.js",
     "bench:explain": "node bench/explain.js",
+    "bench:load": "node bench/load.js",
     "sync:indexes": "node scripts/sync_indexes.js"
   },
   "keywords": [],

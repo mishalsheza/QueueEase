@@ -4,7 +4,7 @@ QueueEase is a queue management app: an Expo (React Native) client talks to a
 Node/Express API over REST, receives live updates over Socket.io, and stores
 data in MongoDB.
 
-This document has five parts:
+This document has six parts:
 
 1. **Before the role-based workflow change**: how the app behaved when it was
    audited, including the problems found. Kept for reference.
@@ -14,6 +14,8 @@ This document has five parts:
 4. **Live updates (current)**: authenticated sockets, rooms, small update
    messages and the "you're being called" notification.
 5. **Indexes (current)**: query plans for the main queries, before and after.
+6. **Load test (current)**: how many concurrent users one server process
+   handles, and where it starts to degrade.
 
 ---
 
@@ -737,4 +739,153 @@ npm run sync:indexes -- --apply
 
 The dry run lists every index no model declares, including any created by
 hand, so check it before applying. Documents are never touched.
+
+---
+
+## 6. Load test (current)
+
+### 6.1 How this was measured
+
+[`backend/bench/load.js`](../backend/bench/load.js) (`npm run bench:load`, about
+3 minutes) takes no URL, so it can't be pointed at Render. For each level it
+starts its own copy of the real server (`node src/server.js`, a separate
+process) against a throwaway MongoDB 8.2 (mongodb-memory-server, WiredTiger,
+data in a temp directory). The server runs from a temp directory, so
+`backend/.env` is never read.
+
+Each level has 5 queues, one admin each, and N users split evenly across them.
+Every user and admin opens a WebSocket with its JWT, as the app does. Users
+subscribe to their queue's room, so every change to a queue goes to all
+N/5 people watching it.
+
+1. **connect:** all N + 5 sockets connect at the same moment.
+2. **burst:** all N users join their queue at the same moment.
+3. **position:** all N ask for their position at once. Each queue must read
+   exactly 1…k.
+4. **churn, 20 s:** each user waits a random think time (mean 5 s), then joins
+   if out or leaves if waiting. Each admin loops call-next, 0.5 s, serve,
+   0.5 s.
+
+Latency is measured from request sent to response. For sockets:
+
+- **called event:** from sending call-next until the called user's
+  `ticket:called` arrives.
+- **fan-out:** from sending call-next until each watcher receives that
+  queue's `queue:update`.
+- **delivered:** the share of watchers that got each update.
+
+Errors are:
+
+- 5xx responses
+- requests with no answer in 10 s
+- network errors
+- socket connect failures and disconnects
+
+400 for an empty queue or counter is an expected answer, not an error.
+Afterwards the database is checked for:
+
+- duplicate tokens or sequence numbers in a queue
+- users with two active tickets in one queue
+- more than one person at a counter
+
+**Setup:** one Apple M3 laptop (8 cores, 8 GB), Node 26. The server, MongoDB
+and the load generator all share it, and MongoDB has no network hop. These
+numbers describe one Node process on this machine. They do not describe the
+deployed service: Render's free instance has 0.1 CPU and reaches Atlas over
+the network.
+
+**Is the load generator the bottleneck?** Its own event-loop lag stayed at
+p99 ≤ 17 ms through 1,000 users and 88–104 ms at 2,000, so no. A 3,000-user run
+is left out because the generator itself lagged there (p99 479 ms), so it
+would have measured the client.
+
+**Why the machine was quiet:** a first sweep ran while another program (a
+stuck VM) used about 6.6 of the 8 cores. At 1,000 users it gave join p95
+1.6 s and burst p95 6.8 s, still with 0 errors. The numbers below come from
+two sweeps on the quiet machine (ranges show both runs), plus single runs at
+1,500 and 2,000.
+
+### 6.2 Results
+
+**Steady load (20 s of churn).** Times are in milliseconds; p95 except where
+noted.
+
+| Users (per queue) | Requests/s | join p50 / p95 | leave | call-next | Live update to every watcher (fan-out) | Delivered | Errors | Server CPU avg | Server memory |
+|---|---|---|---|---|---|---|---|---|---|
+| 100 (20) | 31–33 | 7 / 19–29 | 20–23 | 18–35 | 18–34 | 100% of 2,000 | 0 | 11% | 140–155 MB |
+| 250 (50) | 65 | 6 / 9–14 | 7–9 | 15–16 | 15–16 | 100% of 5,000 | 0 | 15–17% | 186–219 MB |
+| 500 (100) | 122–124 | 5 / 9 | 7–8 | 11–14 | 11–13 | 100% of 10,000 | 0 | 31–32% | 281–308 MB |
+| **1,000 (200)** | **233–236** | **7 / 22–30** | **19–29** | **19–44** | **18–44** | **100% of 20,000** | **0** | 69–71% | 418–462 MB |
+| 1,500 (300) | 304 | 277 / 1,156 | 3,487 | 3,798 | 3,795 | 100% of 17,100 | 0 | 109% | 457 MB |
+| 2,000 (400) | 253–258 | 811–822 / 6,296–6,323 | 6,340–6,660 | 2,554–9,804 | 2,551–9,800 | 100% of 6,000 | **2,008–2,261** | 89–91% | 556–571 MB |
+
+The called user's `ticket:called` arrived as fast as the fan-out at every
+level, and was never missing. CPU is % of one core. Node runs JavaScript on
+one main thread, and above 100% the extra comes from garbage collection and
+I/O threads.
+
+**Everyone at once.**
+
+| Users | All join at the same moment: total / p50 / p95 | Positions exactly 1…k | All sockets connect at once: p95 |
+|---|---|---|---|
+| 100 | 124–128 / 74–78 / 117–121 ms | yes | 40–42 ms |
+| 250 | 308–323 / 184–253 / 300–306 ms | yes | 87–90 ms |
+| 500 | 810–854 / 569–570 / 778–813 ms | yes | 157–159 ms |
+| 1,000 | 2,665–2,745 / 1,729–1,833 / 2,556–2,639 ms | yes | 380–648 ms |
+| 1,500 | 6,214 / 3,624 / 5,818 ms | yes | 637 ms |
+| 2,000 | 45–111 of 2,000 joins timed out (10 s) | no answer for some | 1,122–1,142 ms |
+
+Every join through 1,500 users returned 200. No socket failed to connect at
+any level, and none disconnected.
+
+**Integrity: zero problems in every run, including the overloaded ones.**
+Across all levels from 100 to 3,000 users, up to 4,137 tickets per run, there
+were:
+
+- 0 duplicate tokens
+- 0 duplicate sequence numbers
+- 0 users with two active tickets in a queue
+- 0 queues with two people at the counter
+
+At 2,000+ the position check fails only because some joins timed out, so not
+everyone it expects is in the queue.
+
+### 6.3 Where it degrades, and why
+
+- **Up to 1,000 concurrently active users, it's comfortable.**
+  - About 235 requests/s, with each change broadcast to 200 watchers.
+  - p95 under 50 ms for join, leave and call-next.
+  - Every live update delivered with p95 ≤ 44 ms, and no errors.
+- **At 1,500 it degrades but doesn't fail.**
+  - Still no errors, and every update is delivered.
+  - But p95 rises to 1–4 s, and the server's main thread is saturated (109%).
+- **At 2,000 it fails.**
+  - Requests time out.
+  - About 1,900 connection attempts hit `ETIMEDOUT`, because the server is too busy to accept new connections in time.
+- **Simultaneous bursts degrade first.**
+  - 1,000 joins in the same instant take 2.7 s in total (p95 2.6 s), with no errors.
+  - Two things share the cost:
+    1. **Fan-out:** every join is broadcast to everyone watching that queue, so N simultaneous joins into queues of N/5 send N²/5 messages (200,000 at 1,000 users). With room subscriptions turned off (`SUBSCRIBE=0`), the 1,000-user burst p95 drops from 2,545–2,614 ms to 1,289–1,500 ms (2 runs with rooms, 4 without).
+    2. **The rest:** the joins themselves, about 640–750 per second. Each one atomically increments its queue's counter, inserts a ticket and reads the live state.
+
+**What would raise the limit (not done):**
+
+- run several Node processes behind the load balancer, with the Socket.io
+  Redis adapter and a shared rate-limit store
+- coalesce `queue:update` per queue (for example at most one every 100–250 ms)
+  so a burst sends one update instead of one per join
+
+### 6.4 Reproducing
+
+```
+cd backend
+npm run bench:load                           # 100, 250, 500, 1000 users (~3 min)
+LEVELS=1500,2000 npm run bench:load          # beyond the comfortable range
+SUBSCRIBE=0 LEVELS=1000 npm run bench:load   # burst without socket fan-out
+OUT=/tmp/load.json npm run bench:load        # also save the raw numbers
+```
+
+Other settings: `QUEUES` (5), `DURATION` (20 s), `THINK_MS` (5000),
+`CALL_GAP_MS` (500), `REQUEST_TIMEOUT_MS` (10000). Close heavy programs first:
+the server, MongoDB and the load generator share the machine's CPU.
 
